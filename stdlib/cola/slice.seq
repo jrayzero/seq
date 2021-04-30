@@ -1,0 +1,26 @@
+import math
+
+# A ColaSlice is adjusted on creation, so we do not need to unwrap the optionals
+# on every access
+@tuple(init=False)
+class ColaSlice:
+  start: int
+  stop: int
+  stride: int
+  effective_sz: int
+
+  def __new__(start: int, stop: int, stride: int):
+    effective_sz = (stop-start) // stride + (0 if (stop-start)%stride == 0 else 1)
+    return start,stop,stride,effective_sz
+
+  def __str__(self):
+    return str(self.start) + ':' + str(self.stop) + ':' + str(self.stride)
+    
+@extend
+class Slice:
+
+  def cola_adjust(self, dlen) -> ColaSlice:
+    start = ~self.start if self.start else 0
+    stop = ~self.stop if self.stop else dlen
+    stride = ~self.step if self.step else 1
+    return ColaSlice(start,stop,stride)
