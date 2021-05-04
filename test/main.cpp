@@ -238,6 +238,7 @@ auto getTypeTests(const vector<string> &files) {
   return cases;
 }
 
+
 // clang-format off
 INSTANTIATE_TEST_SUITE_P(
     TypeTests, SeqTest,
@@ -341,6 +342,14 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Values(false)
     ),
     getTestNameFromParam);
+
+INSTANTIATE_TEST_SUITE_P(
+    ColaTests, SeqTest,
+    testing::ValuesIn(getTypeTests({
+      "cola/cola.seq"
+    })),
+    getTypeTestNameFromParam);
+
 
 // clang-format on
 

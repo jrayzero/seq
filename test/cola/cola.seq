@@ -1,0 +1,3 @@
+import cola.block
+
+cola.block.run_tests()

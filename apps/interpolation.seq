@@ -38,10 +38,3 @@ def interpolate_quarter_pel_6tap_bi(mb, six_tap_filter_func=six_tap_filter, bili
 
   return quarter
 
-def run_tests():
-  blk = Block[int,2](5,5)
-  for i in range(blk.nunits()):
-    blk[i] = i
-  print(interpolate_quarter_pel_6tap_bi(blk))
-
-run_tests()

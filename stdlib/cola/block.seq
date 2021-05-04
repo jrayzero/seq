@@ -1,5 +1,4 @@
 from cola.error import ColaError
-from cola.tuple_opts import *
 from cola.slice import ColaSlice
 from cola.extends import *
 import random,string
@@ -445,6 +444,27 @@ class Multidim[T,N:int]:
     s += self._to_str[0](self._get_max_str_len[0]())
     return s
 
+  def __eq__(self, val: T) -> bool:
+    if self._nunits != 1 or self() != val:
+      return False
+    return True
+
+  def __eq__(self, val: list[T]) -> bool:
+    if self._nunits != len(val):
+      return False
+    for i0,i1 in zip(self, val):
+      if i0() != i1:
+        return False
+    return True
+
+  def __eq__(self, val: Multidim[T,N]) -> bool:
+    if self._units != val._nunits:
+      return False
+    for i0,i1 in zip(self, val):
+      if i0() != i1():
+        return False
+    return True
+
 @dataclass(init=False)
 class Block[T,N:int]:
   base: Multidim[T,N]
@@ -513,6 +533,18 @@ class Block[T,N:int]:
   def __iter__(self) -> Generator[View[T,N]]:
     for v in self.base:
       yield View(v)
+
+  def __eq__(self, val) -> bool:
+    return self.base == val
+
+  def __eq__(self, val: Block[T,N]) -> bool:
+    return self.base == val.base
+
+  def __eq__(self, val: View[T,N]) -> bool:
+    return self.base == val.base
+
+  def __ne__(self, val) -> bool:
+    return not (self == val)
     
 @extend
 class View[T,N:int]:
@@ -573,38 +605,65 @@ class View[T,N:int]:
     for v in self.base:
       yield View(v)
 
+  def __eq__(self, val) -> bool:
+    return self.base == val
+
+  def __eq__(self, val: Block[T,N]) -> bool:
+    return self.base == val.base
+
+  def __eq__(self, val: View[T,N]) -> bool:
+    return self.base == val.base
+
+  def __ne__(self, val) -> bool:
+    return not (self == val)
+
 def run_tests():
   blk = Block[int,2](4,5)
-  # do a linear write
   for i in range(20):    
-    blk[i] = i
-  print(blk)
-  print 'a:\n' + str(blk[2,3])
-  print 'b:\n' + str(blk(2,3))
-  print 'c:\n' + str(blk[13])
-  print 'd:\n' + str(blk(13))
+    blk[i] = i+1
+  @test
+  def t0():
+    assert blk.base._buffer == [r+1 for r in range(20)]
+  t0()
+  @test
+  def t1():
+    assert blk[2,3] == 14
+    assert blk(2,3) == 14
+    assert blk[13] == 14
+    assert blk(13) == 14
+  t1()
   blk2 = Block(blk[1::2,1:])
   for i in range(blk2.nunits()):    
     blk2[i] = i*10
-  print(blk2.dims())
-  print(blk2.cgrid_origin())
-  print(blk2.origin_within(blk))
-  print(blk2)
+  @test
+  def t2():
+    assert blk2.base._buffer == [r*10 for r in range(blk2.nunits())]
+    assert blk2.dims() == [2,4]
+    assert blk2.cgrid_origin() == [1,1]
+    assert blk2.origin_within(blk) == [1,1]
+  t2()
   view = blk2[:,::3]
-  print(view.dims())
-  print(view.cgrid_origin())
-  print(view.origin_within(blk))
-  print(view.origin_within(blk2))
-  print(view)
+  @test
+  def t3():
+    assert view == [0, 30, 40, 70]
+    assert view.dims() == [2,2]
+    assert view.cgrid_origin() == [1,1]
+    assert view.origin_within(blk) == [1,1]
+    assert view.origin_within(blk2) == [0,0]
+  t3()
   view[1,0] = 41
-  print(view)
+  @test
+  def t4():
+    assert view[1,0] == [41]
+  t4()
   view2 = blk2[1:,1::2]
-  print(view2)
-  #print(view2(0,-1)) # should fail#
+  @test
+  def t5():
+    assert view2 == [50, 70]
+  t5()
   view3 = blk2[1:,1:]
-  print(view3)
-  print(view3[:,-1:])
-  
-
-# TODO get rid of this. Is there an equivalent to the __name__=='__main__' thing in python?
-
+  @test
+  def t6():
+    assert view3 == [50, 60, 70]
+    assert view3[:,-1:] == [41, 50, 60, 70]
+  t6()
