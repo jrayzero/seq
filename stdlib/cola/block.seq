@@ -32,6 +32,13 @@ class CoordGrid[N:int]:
     for d in dims:
       self.dims[idx] = d
       idx += 1
+
+  def __init__(self, dims: Array[int]):
+    self._common_init()
+    if len(dims) != N:
+      raise ColaError()
+    for n in range(N):
+      self.dims[n] = dims[n]      
  
   def ndims(self) -> int:
     return N
@@ -100,6 +107,23 @@ class Multidim[T,N:int]:
     self._is_owner = is_owner
     self._is_root = False
 
+  # For now, changing the density creates a brand new cgrid hierarchy because I'm confused about
+  # how to maintain that mapping. If we need that mapping, we can re-evaluate,
+  def __init__(self, other: Multidim[T,N], new_dims: Array[int], new_densities: Array[int]):
+    self._common_init()    
+    self._dims = new_dims
+    self._densities = new_densities
+    self._nunits = 1
+    self._cgrid_mapping = Array[ColaSlice](N)
+    for n in range(N):
+      self._nunits *= new_dims[n]
+      self._cgrid_mapping[n] = ColaSlice(0,new_dims[n],1)
+    self._buffer_owner = self
+    self._buffer = Array[T](self._nunits)      
+    self._cgrid = CoordGrid[N](new_dims)
+    self._is_owner = True
+    self._is_root = True
+
   def __init__(self, other: Multidim[T,N], cgrid_mapping: Array[ColaSlice]):
     self._common_init()
     self._cgrid_mapping = cgrid_mapping
@@ -132,11 +156,14 @@ class Multidim[T,N:int]:
       raise ColaError('Different cgrids')
     origin = Array[int](N)
     for idx in range(N):
+      if self._densities[idx] != other._densities[idx]:
+        raise ColaError('Different density at idx ' + str(idx))
       this = self._cgrid_mapping[idx]
       that = other._cgrid_mapping[idx]
       this_start = this.start
       that_start = that.start
-      if this_start < that_start:
+      # trust this expression.
+      if this_start < that_start or this_start+(self._dims[idx]-1)*this.stride+1 > that_start+(other._dims[idx]-1)*that.stride+1:
         return (False, Array[int](0))
       rel = this_start - that_start
       that_stride = that.stride
@@ -173,6 +200,22 @@ class Multidim[T,N:int]:
       lidx %= mul
     coord[N-1] = lidx
     return coord
+
+  def set_density(self, *dens) -> Multidim[T,N]:
+    if staticlen(dens) != N:
+      raise ColaError('Must set density for each dimension')
+    dims = Array[int](N)
+    densities = Array[int](N)
+    # initialize 
+    for idx,d in enumerate(self._dims):
+      dims[idx] = d
+      densities[idx] = self._densities[idx]
+    idx = 0
+    for d in dens:
+      dims[idx] *= d
+      densities[idx] *= d
+      idx += 1
+    return Multidim(self, dims, densities)
 
   # if can't have bool generic, use integer and just check for 0 or 1
   # B => linearize final coord if 1
@@ -244,9 +287,6 @@ class Multidim[T,N:int]:
       raise ColaError('out-of-bounds in buffer access')
     return self._buffer[self._remap_local_lidx_to_buffer_lidx[1,1](0)]  
 
-  # NOTE ON NEGATIVE INDICES: negative indices can only be used when the stride in that dimension is 1
-  # relative to the cgrid. Otherwise it's not really clear what the stride means.
-
   # if len(idxs) == 1, it is considered a linear index into the local region, even if N > 1.
   # This allows you to index with either 1 or N dimensions.
   def __call__(self, idx: int, *idxs) -> T:
@@ -262,6 +302,41 @@ class Multidim[T,N:int]:
       if not x.fully_contained(self._buffer_owner)[0]:
         raise ColaError('out-of-bounds in buffer access')
       return x()
+
+
+  # like __call__, but clamps to the real buffer borders if necessary. Also ignores strided access into buffer,
+  # this just adds on the idxs directly to self's origin within the buffer
+  def aclamp(self, idx: int, *idxs) -> T:
+    for idx in idxs:
+      if not isinstance(idx, int):
+        raise ColaError('__call__ can only get integers')
+    if staticlen(idxs) == 0:
+      raise ColaError('Not implemented')
+    else:
+      tup = (idx,) + tuple(i for i in idxs)
+      if staticlen(tup) != N:
+        raise ColaError()
+      arr = Array[int](N)
+      idx = 0
+      for t in tup:
+        arr[idx] = t
+        idx += 1
+      self_map = self._cgrid_mapping
+      buffer_map = self._buffer_owner._cgrid_mapping
+      coord = Array[int](N)
+      # clamp to the buffer
+      for n in range(N):
+        # get the access for this dim
+        # self.start-buff.start gives the relative origin to buffer
+        s = self_map[n].start - buffer_map[n].start + arr[n]
+        if s < 0:
+          s = 0
+        if s >= buffer_map[n].start + self._buffer_owner._dims[n]:
+          s = self._buffer_owner._dims[n]-1
+        coord[n] = s
+      # now get the buffer idx
+      lidx = self._buffer_owner._remap_local_coord_to_buffer_lidx[1,1](coord)
+      return self._buffer[lidx]
 
   def __getitem__(self, idx: int) -> Multidim[T,N]:
     return self.__getitem__((idx,))
@@ -289,12 +364,7 @@ class Multidim[T,N:int]:
       for idx in idxs:
         canon[i] = self._canon(idx, self._dims[i])
         i += 1
-    # check negative indices (if applicable)
-    for n in range(N):
-      if canon[n].start < 0:
-        if self._cgrid_mapping[n].stride > 1:
-          raise ColaError('Negative indices only allowed with unit stride')
-    # now combine to map to cgrid
+    # now combine to map to cgrid (remember, canon is still relative to self)
     combined = Array[ColaSlice](N)
     for n in range(N):
       this = self._cgrid_mapping[n]
@@ -395,11 +465,17 @@ class Block[T,N:int]:
   def __init__(self, other: View[T,N]):
     self.base = Multidim(other.base, True)
 
+  def __init__(self, other: Multidim[T,N]):
+    self.base = other
+
   def dims(self) -> Array[int]:
     return self.base.dims()
 
   def nunits(self) -> int:
     return self.base.nunits()
+
+  def set_density(self, *dens) -> Block[T,N]:
+    return Block(self.base.set_density(*dens))
 
   def cgrid_origin(self) -> Array[int]:
     return self.base.cgrid_origin()
@@ -416,8 +492,17 @@ class Block[T,N:int]:
   def __call__(self, idx: int, *idxs) -> T:
     return self.base.__call__(idx, *idxs)
 
+  def aclamp(self, idx: int, *idxs) -> T:
+    return self.base.aclamp(idx, *idxs)
+
   def __setitem__(self, idxs, item):
     self.base[idxs] = item
+
+  def __setitem__[N2:int](self, idxs, item: Block[T,N2]):
+    self.base[idxs] = item.base
+
+  def __setitem__[N2:int](self, idxs, item: View[T,N2]):
+    self.base[idxs] = item.base
 
   def __getitem__(self, idxs) -> View[T,N]:
     return View(self.base[idxs])
@@ -448,6 +533,9 @@ class View[T,N:int]:
   def nunits(self) -> int:
     return self.base.nunits()
 
+  def set_density(self, *dens) -> Block[T,N]:
+    return Block(self.base.set_densities(*dens))
+
   def cgrid_origin(self) -> Array[int]:
     return self.base.cgrid_origin()
 
@@ -463,8 +551,17 @@ class View[T,N:int]:
   def __call__(self, idx: int, *idxs) -> T:
     return self.base.__call__(idx, *idxs)
 
+  def aclamp(self, idx: int, *idxs) -> T:
+    return self.base.aclamp(idx, *idxs)
+
   def __setitem__(self, idxs, item):
     self.base[idxs] = item
+
+  def __setitem__[N2:int](self, idxs, item: Block[T,N2]):
+    self.base[idxs] = item.base
+
+  def __setitem__[N2:int](self, idxs, item: View[T,N2]):
+    self.base[idxs] = item.base
 
   def __getitem__(self, idxs) -> View[T,N]:
     return View(self.base[idxs])
@@ -510,4 +607,4 @@ def run_tests():
   
 
 # TODO get rid of this. Is there an equivalent to the __name__=='__main__' thing in python?
-run_tests()
+

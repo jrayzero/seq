@@ -1,4 +1,10 @@
 @extend
 class Array[T]:
+
   def __str__(self) -> str:
     return '[' + ','.join([str(self[i]) for i in range(self.len)]) + ']'
+
+  def __iter__(self):
+    for i in range(self.len):
+      yield self[i]
+    
