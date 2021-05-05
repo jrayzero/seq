@@ -29,3 +29,22 @@ class Array[T]:
 
   def __ne__(self, other: list[T]):
     return not (self == other)
+
+  def __match__(self, other: Array[T]) -> bool:
+    return self == other
+
+  def __match__(self, other: list[T]) -> bool:
+    if len(self) != len(other):
+      return False
+    for s,o in zip(self, other):
+      if s != 0:
+        return False
+    return True  
+
+@extend
+class list[T]:
+  def __match__(self, other: list[T]) -> bool:
+    return self == other
+
+  def __match__(self, other: Array[T]) -> bool:
+    return other.__match__(self)

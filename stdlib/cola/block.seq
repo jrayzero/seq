@@ -86,6 +86,27 @@ class Multidim[T,N:int]:
     self._is_owner = True
     self._is_root = True
 
+  def __init__(self, dims: Array[int]):
+    self._common_init()
+    if len(dims) != N:
+      raise ColaError('Incorrect number of dims')        
+    self._dims = Array[int](N)
+    self._densities = Array[int](N)
+    self._cgrid_mapping = Array[ColaSlice](N)
+    idx = 0
+    self._nunits = 1
+    for d in dims:
+      self._dims[idx] = d
+      self._densities[idx] = 1
+      self._cgrid_mapping[idx] = ColaSlice(0,d,1)
+      self._nunits *= d
+      idx += 1
+    self._buffer_owner = self
+    self._buffer = Array[T](self._nunits)
+    self._cgrid = CoordGrid[N](dims)
+    self._is_owner = True
+    self._is_root = True
+
   def __init__(self, other: Multidim[T,N], is_owner: bool):
     self._common_init()    
     self._nunits = other._nunits
@@ -465,6 +486,44 @@ class Multidim[T,N:int]:
         return False
     return True
 
+  # lets you throw out the other cgrid and use a different one with a custom location 
+  # TODO check that dims don't extend beyond cgrid and that location is valid.
+  def remap(self, cgrid: CoordGrid[N], location: Array[T], buffer_owner: Multidim[T,N]) -> Multidim[T,N]:
+    if cgrid != buffer_owner._cgrid:
+      raise ColaError()
+    for n in range(N):
+      if location[n] < 0:
+        raise ColaError()
+      if location[n] + self._dims[n] >= cgrid.dims[n]:
+        raise ColaError()
+    remapped = Multidim(self, False)
+    remapped._cgrid = cgrid
+    remapped._buffer_owner = buffer_owner
+    # adjust mapping
+    adj_map = Array[ColaSlice](N)
+    for n in range(N):
+      m = self._cgrid_mapping[n]
+      adj_map[m] = ColaSlice(m.start + location[n], m.stop + location[n], m.stride)
+    remapped._cgrid_mapping = adj_map
+    return remapped
+
+  def remap(self, cgrid: CoordGrid[N], location: Array[T]) -> Multidim[T,N]:
+    for n in range(N):
+      if location[n] < 0:
+        raise ColaError()      
+      if location[n] + self._dims[n] > cgrid.dims[n]:
+        raise ColaError(str(location[n]) + ' ' + str(self._dims[n]) + ' ' + str(cgrid.dims[n]))
+    remapped = Multidim(self, False)
+    remapped._cgrid = cgrid
+    remapped._buffer_owner = remapped
+    # adjust mapping
+    adj_map = Array[ColaSlice](N)
+    for n in range(N):
+      m = self._cgrid_mapping[n]
+      adj_map[n] = ColaSlice(m.start + location[n], m.stop + location[n], m.stride)
+    remapped._cgrid_mapping = adj_map
+    return remapped
+
 @dataclass(init=False)
 class Block[T,N:int]:
   base: Multidim[T,N]
@@ -530,9 +589,9 @@ class Block[T,N:int]:
   def __str__(self) -> str:
     return str(self.base)
 
-  def __iter__(self) -> Generator[View[T,N]]:
-    for v in self.base:
-      yield View(v)
+#  def internal_iter(self) -> Generator[View[T,N]]:
+#    for v in self.base:
+#      yield View(v)
 
   def __eq__(self, val) -> bool:
     return self.base == val
@@ -545,6 +604,15 @@ class Block[T,N:int]:
 
   def __ne__(self, val) -> bool:
     return not (self == val)
+
+  def remap(self, cgrid: CoordGrid[N], location: Array[T]) -> Block[T,N]:
+    return Block(self.base.remap(cgrid, location))
+
+  def remap(self, other: Block[T,N]) -> Block[T,N]:
+    return Block(self.base.remap(other.base._cgrid, other.base.cgrid_origin()))
+
+  def buffer_owner(self) -> Block[T,N]:
+    return Block(self.base._buffer_owner)
     
 @extend
 class View[T,N:int]:
@@ -601,10 +669,6 @@ class View[T,N:int]:
   def __str__(self) -> str:
     return str(self.base)
 
-  def __iter__(self) -> Generator[View[T,N]]:
-    for v in self.base:
-      yield View(v)
-
   def __eq__(self, val) -> bool:
     return self.base == val
 
@@ -616,6 +680,66 @@ class View[T,N:int]:
 
   def __ne__(self, val) -> bool:
     return not (self == val)
+
+  def buffer_owner(self) -> Block[T,N]:
+    return Block(self.base._buffer_owner)
+
+  def remap(self, cgrid: CoordGrid[N], location: Array[T], buffer_owner: Block[T,N]) -> View[T,N]:
+    return View(self.base.remap(cgrid, location, buffer_owner.base))
+
+  def remap(self, cgrid: CoordGrid[N], location: Array[T], buffer_owner: View[T,N]) -> View[T,N]:
+    return View(self.base.remap(cgrid, location, buffer_owner.base))
+
+  def remap(self, other: View[T,N]) -> View[T,N]:
+    return Block(self.base.remap(other.base._cgrid, other.base._cgrid_origin(), other.base._buffer_owner))
+
+# users should utilize scan for iteration on blocks and views. Multidim just uses __iter__, but users
+# shouldn't have to touch that part.
+# Using scan makes it easier to identify "interesting" loop use cases in the compiler
+def scan(item, *items):
+  if staticlen(items) == 0:
+    for i in item.base:
+      yield i
+  else:
+    iters = (iter(item.base),) + tuple(iter(i.base) for i in items)
+    done = False
+    while not done:
+      for i in iters:
+        if i.done():
+          done = True
+      if not done:
+        yield tuple(View(i.next()) for i in iters)
+    for i in iters:
+      i.destroy()
+
+### Arithmetic ###
+# I put this separately so it doesn't clutter up the initial class defs
+# Arithmetic creates a new cgrid. You can choose to remap it if you want
+@extend 
+class Multidim[T,N:int]:
+  def __sub__(self, other: Multidim[T,N]):
+    if self.dims() != other.dims():
+      raise ColaError('Invalid operands ' + str(self.dims()) + ' ' + str(other.dims()))
+    res = Multidim[T,N](self.dims())
+    for n in range(self._nunits):
+      res[n] = self(n) - other(n)
+    return res
+
+@extend
+class Block[T,N:int]:
+  def __sub__(self, other: Block[T,N]) -> Block[T,N]:
+    return Block(self.base - other.base)
+
+  def __sub__(self, other: View[T,N]) -> Block[T,N]:
+    return Block(self.base - other.base)
+
+@extend
+class View[T,N:int]:
+  def __sub__(self, other: Block[T,N]) -> Block[T,N]:
+    return Block(self.base - other.base)
+
+  def __sub__(self, other: View[T,N]) -> Block[T,N]:
+    return Block(self.base - other.base)
 
 def run_tests():
   blk = Block[int,2](4,5)
