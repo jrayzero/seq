@@ -331,6 +331,7 @@ class Multidim[T,N:int]:
       if not isinstance(idx, int):
         raise ColaError('__call__ can only get integers')
     if staticlen(idxs) == 0:
+      # just lazy
       raise ColaError('Not implemented')
     else:
       tup = (idx,) + tuple(i for i in idxs)
@@ -487,7 +488,6 @@ class Multidim[T,N:int]:
     return True
 
   # lets you throw out the other cgrid and use a different one with a custom location 
-  # TODO check that dims don't extend beyond cgrid and that location is valid.
   def remap(self, cgrid: CoordGrid[N], location: Array[T], buffer_owner: Multidim[T,N]) -> Multidim[T,N]:
     if cgrid != buffer_owner._cgrid:
       raise ColaError()
@@ -523,6 +523,10 @@ class Multidim[T,N:int]:
       adj_map[n] = ColaSlice(m.start + location[n], m.stop + location[n], m.stride)
     remapped._cgrid_mapping = adj_map
     return remapped
+
+  def default_fill(self,mul):
+    for i in range(self._nunits):
+      self[i] = i*mul
 
 @dataclass(init=False)
 class Block[T,N:int]:
@@ -613,7 +617,11 @@ class Block[T,N:int]:
 
   def buffer_owner(self) -> Block[T,N]:
     return Block(self.base._buffer_owner)
-    
+
+  def default_fill(self,mul=1):
+    self.base.default_fill(mul)
+    return self
+
 @extend
 class View[T,N:int]:
 
@@ -692,6 +700,10 @@ class View[T,N:int]:
 
   def remap(self, other: View[T,N]) -> View[T,N]:
     return Block(self.base.remap(other.base._cgrid, other.base._cgrid_origin(), other.base._buffer_owner))
+
+  def default_fill(self, mul=1):
+    self.base.default_fill(mul)
+    return self
 
 # users should utilize scan for iteration on blocks and views. Multidim just uses __iter__, but users
 # shouldn't have to touch that part.
@@ -791,3 +803,12 @@ def run_tests():
     assert view3 == [50, 60, 70]
     assert view3[:,-1:] == [41, 50, 60, 70]
   t6()
+  ref4x4 = Block[int,2](4,4).default_fill(1)
+  est4x4 = Block[int,2](4,4).default_fill(2)
+
+  @test
+  def t7():
+    diff = ref4x4-est4x4
+    assert diff == [0,-1,-2,-3,-4,-5,-6,-7,-8,-9,-10,-11,-12,-13,-14,-15]
+  t7()
+
