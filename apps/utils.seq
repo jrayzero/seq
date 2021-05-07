@@ -1,0 +1,6 @@
+from cola.block import Block,View
+from cola.error import ColaError
+
+def validate_arg(arg):
+  if not (isinstance(arg, Block) or isinstance(arg, View)):
+    raise ColaError()
