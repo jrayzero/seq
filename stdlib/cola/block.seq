@@ -251,6 +251,21 @@ class Multidim[T,N:int]:
       origin[idx] = rel
     return (True, origin)
 
+  # check if valid within the buffer
+  def exists(self):
+    for idx in range(N):
+      this = self._cgrid_mapping[idx]
+      that = self._buffer_owner._cgrid_mapping[idx]
+      this_start = this.start
+      that_start = that.start
+      this_stop = this.stop
+      that_stop = that.stop
+      this_stride = this.stride
+      that_stride = that.stride
+      if this_start < that_start or this_stop > that_stop:
+        return False
+    return True
+  
   # relative to _atom (so they must have the same _atom)
   def origin_within(self, other: Multidim[T,N]) -> Array[int]:
     if self._atom != other._atom:
@@ -365,35 +380,43 @@ class Multidim[T,N:int]:
   def aclamp(self, idx: int, *idxs) -> T:
     for idx in idxs:
       if not isinstance(idx, int):
-        raise ColaError('__aclamp__ can only get integers')
+        raise ColaError('__aclamp__ can only get integers')      
     if staticlen(idxs) == 0:
-      # just lazy
-      raise ColaError('Not implemented')
+      return self._aclamp((idx,))
     else:
-      tup = (idx,) + tuple(i for i in idxs)
-      if staticlen(tup) != N:
-        raise ColaError()
-      arr = Array[int](N)
+      return self._aclamp((idx,) + tuple(i for i in idxs))
+
+  def _aclamp(self, tup) -> T:
+    arr = Array[int](N)
+    if staticlen(tup) != N:
+      if staticlen(tup) == 1:
+        # fix linear index
+        # get relative to self
+        arr = self.delinearize(tup[0])
+      else:
+        raise ColaError('Incorrect number of idxs')
+    else:
       idx = 0
       for t in tup:
         arr[idx] = t
         idx += 1
-      self_map = self._cgrid_mapping
-      buffer_map = self._buffer_owner._cgrid_mapping
-      coord = Array[int](N)
-      # clamp to the buffer
-      for n in range(N):
-        # get the access for this dim
-        # self.start-buff.start gives the relative origin to buffer
-        s = self_map[n].start - buffer_map[n].start + self._ATOMize(arr[n]) * self_map[n].stride
-        if s < 0:
-          s = 0
-        if s >= buffer_map[n].start + self._buffer_owner._dims[n]:
-          s = self._buffer_owner._dims[n]-1
-        coord[n] = self._deATOMize(s)
-      # now get the buffer idx
-      lidx = self._buffer_owner._remap_local_coord_to_buffer_lidx[1,1](coord)
-      return self._buffer[lidx]
+    self_map = self._cgrid_mapping
+    buffer_map = self._buffer_owner._cgrid_mapping
+    coord = Array[int](N)
+    # clamp to the buffer
+    for n in range(N):
+      # get the access for this dim
+      # self.start-buff.start gives the relative origin to buffer
+      s = self_map[n].start - buffer_map[n].start + self._ATOMize(arr[n]) * self_map[n].stride
+      if s < 0:
+        s = 0
+      if s >= buffer_map[n].start + self._buffer_owner._dims[n]:
+        s = self._buffer_owner._dims[n]-1
+      coord[n] = self._deATOMize(s)
+    # now get the buffer idx
+    lidx = self._buffer_owner._remap_local_coord_to_buffer_lidx[1,1](coord)
+    return self._buffer[lidx]
+
 
   # get a view on the location in self corresponding to region
   # This ignores the stride of self and other, so that region basically corresponds directly to the buffer.
@@ -452,8 +475,6 @@ class Multidim[T,N:int]:
         mapping[n] = cs4
         dims[n] = cs4.effective_sz
       return Multidim[T,N](mapping, self._cgrid, self._buffer_owner, self._buffer, dims, self._buffer_owner._atom)    
-#      raise ColaError('Test')
-      
   
   def __getitem__(self, idx: int) -> Multidim[T,N]:
     return self.__getitem__((idx,))  
@@ -488,19 +509,22 @@ class Multidim[T,N:int]:
     for n in range(N):
       this = self._cgrid_mapping[n]
       that = canon[n]
-#      combo_start = this.start + self._ATOMize(that.start) * this.stride
-#      combo_stop = this.start + self._ATOMize(that.stop) * this.stride
       combo_start = this.start + that.start * this.stride
       combo_stop = this.start + that.stop * this.stride
       combo_stride = this.stride * that.stride
       combined[n] = ColaSlice(combo_start, combo_stop, combo_stride)
     return Multidim(self, combined)  
 
+  # These directly access the buffer otherwise you'll infinitely recurse
+  def __setitem__(self, idx: Multidim[T,N], item: T):
+    sliced = self[idx]
+    for s in range(sliced.nunits()):
+      sliced._buffer[sliced._remap_local_lidx_to_buffer_lidx[1,1](s)] = item
+
   def __setitem__(self, idxs, item: T):
     sliced = self[idxs]
-    if sliced.nunits() != 1:
-      raise ColaError('Region size mismatch ' + str(sliced.nunits()) + ' ' + str(idxs))
-    sliced._buffer[sliced._remap_local_lidx_to_buffer_lidx[1,1](0)] = item
+    for s in range(sliced.nunits()):
+      sliced._buffer[sliced._remap_local_lidx_to_buffer_lidx[1,1](s)] = item
 
   def __setitem__[N2:int](self, idxs, item: Multidim[T,N2]):
     sliced = self[idxs]
@@ -646,6 +670,15 @@ class Block[T,N:int]:
   def aclamp(self, idx: int, *idxs) -> T:
     return self.base.aclamp(idx, *idxs)
 
+  def aclamp(self) -> T:
+    return self.base.aclamp(0)
+
+  def __setitem__(self, idx: Block[T,N], item: T):
+    self.base[idx.base] = item
+
+  def __setitem__(self, idx: View[T,N], item: T):
+    self.base[idx.base] = item
+
   def __setitem__(self, idxs, item):
     self.base[idxs] = item
 
@@ -719,6 +752,9 @@ class View[T,N:int]:
   def cgrid_origin(self) -> Array[int]:
     return self.base.cgrid_origin()
 
+  def cgrid_origin_abs(self) -> Array[int]:
+    return self.base.cgrid_origin_abs()
+
   def origin_within(self, other: Block[T,N]) -> Array[int]:
     return self.base.origin_within(other.base)
 
@@ -733,6 +769,18 @@ class View[T,N:int]:
 
   def aclamp(self, idx: int, *idxs) -> T:
     return self.base.aclamp(idx, *idxs)
+
+  def aclamp(self) -> T:
+    return self.base.aclamp(0)
+
+  def exists(self) -> bool:
+    return self.base.exists()
+
+  def __setitem__(self, idx: Block[T,N], item: T):
+    self.base[idx.base] = item
+
+  def __setitem__(self, idx: View[T,N], item: T):
+    self.base[idx.base] = item
 
   def __setitem__(self, idxs, item):
     self.base[idxs] = item
@@ -926,8 +974,8 @@ def run_tests():
     force_set_ATOM(4)
     vals = Block[int,2]([16,16],atom=4).default_fill()
     flags = vals.set_atom(1).default_fill(100)
-    print(vals)
-    print(flags)    
+#    print(vals)
+#    print(flags)    
 #    print(flags[vals[2,1]])
     force_set_ATOM(1)
   t10()
