@@ -3,41 +3,61 @@ from cola.slice import ColaSlice
 from cola.extends import *
 import random,string
 
+ATOM: int = 1
+ATOM_set: bool = False
+cgrid_created: bool = False
+
+# can only set once, and it must be before a cgrid is created
+def set_ATOM(atom: int):
+  if ATOM_set or cgrid_created:
+    raise ColaError()
+  global ATOM
+  global ATOM_set  
+  ATOM = atom
+  ATOM_set = True
+
+# THIS IS ONLY FOR INTERNAL DEBUGGING PURPOSES
+def force_set_ATOM(atom: int):
+  global ATOM
+  ATOM = atom
+
 def valid_N[N:int]():
   if N < 1:
     raise ColaError()  
 
 class CoordGrid[N:int]:
-  dims: Array[int]
+#  dims: Array[int]
   unique_id: str
 
   def _common_init(self):
+    global cgrid_created
+    cgrid_created = True
     valid_N[N]()
     self.unique_id = ''.join(random.choices(string.printable, k=5))
-    self.dims = Array[int](N)
+#    self.dims = Array[int](N)
 
   # TODO general tuple
   def __init__(self, dim: int):
     self._common_init()
     if N != 1:
       raise ColaError('Incorrect number of dims')
-    self.dims[0] = dim
+#    self.dims[0] = dim
 
   def __init__(self, *dims):
     self._common_init()
     if staticlen(dims) != N:
       raise ColaError('Incorrect number of dims')
     idx = 0
-    for d in dims:
-      self.dims[idx] = d
-      idx += 1
+#    for d in dims:
+#      self.dims[idx] = d
+#      idx += 1
 
   def __init__(self, dims: Array[int]):
     self._common_init()
-    if len(dims) != N:
-      raise ColaError()
-    for n in range(N):
-      self.dims[n] = dims[n]      
+#    if len(dims) != N:
+#      raise ColaError()
+#    for n in range(N):
+#      self.dims[n] = dims[n]      
  
   def ndims(self) -> int:
     return N
@@ -51,75 +71,86 @@ class CoordGrid[N:int]:
 # TODO restrict T to a primitive type in compiler
 @dataclass(init=False)
 class Multidim[T,N:int]:
-  
+  # relative to ATOM
   _dims: Array[int]
+  # relative to ATOM
   _nunits: int
   _buffer: Array[T]
   _buffer_owner: Multidim[T,N]
   _cgrid: CoordGrid[N]
+  # relative to ATOM
   _cgrid_mapping: Array[ColaSlice]
-  _densities: Array[int]
   _is_owner: bool
   _is_root: bool
+  _atom: int
 
   def _common_init(self):
     valid_N[N]()
+
+  # map from self._atom to ATOM
+  def _ATOMize(self, idx: int) -> int:
+    return idx * (ATOM // self._atom)
+
+  # map from ATOM to self._atom
+  def _deATOMize(self, idx: int) -> int:
+    return idx // (ATOM // self._atom)    
 
   def __init__(self, *dims):
     self._common_init()
     if staticlen(dims) != N:
       raise ColaError('Incorrect number of dims')        
     self._dims = Array[int](N)
-    self._densities = Array[int](N)
     self._cgrid_mapping = Array[ColaSlice](N)
     idx = 0
+    self._atom = 1
     self._nunits = 1
     for d in dims:
-      self._dims[idx] = d
-      self._densities[idx] = 1
-      self._cgrid_mapping[idx] = ColaSlice(0,d,1)
-      self._nunits *= d
+      d2 = self._ATOMize(d)
+      self._dims[idx] = d2
+      self._cgrid_mapping[idx] = ColaSlice(0,d2,1)
+      self._nunits *= d2
       idx += 1
     self._buffer_owner = self
-    self._buffer = Array[T](self._nunits)
+    self._buffer = Array[T](self.nunits())
     self._cgrid = CoordGrid[N](*dims)
     self._is_owner = True
     self._is_root = True
 
-  def __init__(self, dims: Array[int]):
+  # THESE DIMS ARE ALREADY ATOMIZED
+  def __init__(self, dims: Array[int], atom: int = 1):
     self._common_init()
     if len(dims) != N:
       raise ColaError('Incorrect number of dims')        
+    if ATOM % atom != 0:
+      raise ColaError('ATOM must be multiple of atom')
     self._dims = Array[int](N)
-    self._densities = Array[int](N)
+    self._atom = atom
     self._cgrid_mapping = Array[ColaSlice](N)
     idx = 0
     self._nunits = 1
     for d in dims:
       self._dims[idx] = d
-      self._densities[idx] = 1
       self._cgrid_mapping[idx] = ColaSlice(0,d,1)
       self._nunits *= d
       idx += 1
     self._buffer_owner = self
-    self._buffer = Array[T](self._nunits)
+    self._buffer = Array[T](self.nunits())
     self._cgrid = CoordGrid[N](dims)
     self._is_owner = True
     self._is_root = True
 
-  def __init__(self, other: Multidim[T,N], is_owner: bool):
+  def __init__(self, other: Multidim[T,N], is_owner: bool, atom:int):
     self._common_init()    
     self._nunits = other._nunits
-    self._dims = Array[int](N) #[d for d in other._dims]    
-    self._densities = Array[int](N) #[d for d in other._densities]
-    self._cgrid_mapping = Array[ColaSlice](N) #[c for c in other._cgrid_mapping]
+    self._dims = Array[int](N)   
+    self._cgrid_mapping = Array[ColaSlice](N)
+    self._atom = atom
     for n in range(N):
       self._dims[n] = other._dims[n]
-      self._densities[n] = other._densities[n]
       self._cgrid_mapping[n] = other._cgrid_mapping[n]
     if is_owner:
       self._buffer_owner = self
-      self._buffer = Array[T](self._nunits)      
+      self._buffer = Array[T](self.nunits())      
     else:
       self._buffer_owner = other._buffer_owner
       self._buffer = other._buffer
@@ -127,31 +158,14 @@ class Multidim[T,N:int]:
     self._is_owner = is_owner
     self._is_root = False
 
-  # For now, changing the density creates a brand new cgrid hierarchy because I'm confused about
-  # how to maintain that mapping. If we need that mapping, we can re-evaluate,
-  def __init__(self, other: Multidim[T,N], new_dims: Array[int], new_densities: Array[int]):
-    self._common_init()    
-    self._dims = new_dims
-    self._densities = new_densities
-    self._nunits = 1
-    self._cgrid_mapping = Array[ColaSlice](N)
-    for n in range(N):
-      self._nunits *= new_dims[n]
-      self._cgrid_mapping[n] = ColaSlice(0,new_dims[n],1)
-    self._buffer_owner = self
-    self._buffer = Array[T](self._nunits)      
-    self._cgrid = CoordGrid[N](new_dims)
-    self._is_owner = True
-    self._is_root = True
-
   def __init__(self, other: Multidim[T,N], cgrid_mapping: Array[ColaSlice]):
     self._common_init()
     self._cgrid_mapping = cgrid_mapping
     self._cgrid = other._cgrid
-    self._densities = other._densities
     self._buffer_owner = other._buffer_owner
     self._buffer = other._buffer
     self._dims = Array[int](N)
+    self._atom = other._atom
     self._nunits = 1  
     for idx in range(N): 
       self._dims[idx] = self._cgrid_mapping[idx].effective_sz
@@ -159,42 +173,95 @@ class Multidim[T,N:int]:
     self._is_owner = False
     self._is_root = False
 
+  # make completely from scratch
+  def __init__(self, cgrid_mapping: Array[ColaSlice], cgrid: CoordGrid[N], 
+               buffer_owner: Multidim[T,N], buffer: Array[T], dims: Array[int], 
+               atom: int, is_owner: bool=False, is_root: bool=False):
+    self._common_init()
+    self._cgrid_mapping = cgrid_mapping
+    self._cgrid = cgrid
+    self._buffer_owner = buffer_owner
+    self._buffer = buffer
+    self._dims = dims
+    self._atom = atom
+    self._is_owner = is_owner
+    self._is_root = is_root
+    self._nunits = 1
+    for n in range(N):
+      self._nunits *= dims[n]
+
+  # relative to _atom
   def dims(self) -> Array[int]:
+    deatomized = Array[int](N)
+    for n in range(N):
+      deatomized[n] = self._deATOMize(self._dims[n])
+    return deatomized
+
+  # relative to _atom
+  def nunits(self) -> int:
+    nun = self._nunits
+    for n in range(N):
+      nun = self._deATOMize(nun)
+    return nun
+
+  # relative to ATOM
+  def dims_abs(self) -> Array[int]:
     return self._dims
 
-  def nunits(self) -> int:
+  # relative to ATOM
+  def nunits_abs(self) -> int:
     return self._nunits
   
+  # relative to _atom
   def cgrid_origin(self) -> Array[int]:
+    origin = Array[int](N)
+    for idx in range(N):
+      origin[idx] = self._deATOMize(self._cgrid_mapping[idx].start)
+    return origin
+
+  # relative to ATOM
+  def cgrid_origin_abs(self) -> Array[int]:
     origin = Array[int](N)
     for idx in range(N):
       origin[idx] = self._cgrid_mapping[idx].start
     return origin
 
+  # returns origin relative to ATOM
   def fully_contained(self, other: Multidim[T,N]) -> Tuple[bool,Array[int]]:
     if self._cgrid != other._cgrid:
       raise ColaError('Different cgrids')
     origin = Array[int](N)
     for idx in range(N):
-      if self._densities[idx] != other._densities[idx]:
-        raise ColaError('Different density at idx ' + str(idx))
       this = self._cgrid_mapping[idx]
       that = other._cgrid_mapping[idx]
       this_start = this.start
       that_start = that.start
-      # trust this expression.
-      if this_start < that_start or this_start+(self._dims[idx]-1)*this.stride+1 > that_start+(other._dims[idx]-1)*that.stride+1:
+      this_stop = this.stop
+      that_stop = that.stop
+      this_stride = this.stride
+      that_stride = that.stride
+      if this_start < that_start or this_stop > that_stop:
         return (False, Array[int](0))
       rel = this_start - that_start
-      that_stride = that.stride
+      # check that it is on stride line
       if rel % that_stride != 0:
         return (False, Array[int](0))
-      this_stride = this.stride
       if this_stride % that_stride != 0:
         return (False, Array[int](0))
       origin[idx] = rel
     return (True, origin)
 
+  # relative to _atom (so they must have the same _atom)
+  def origin_within(self, other: Multidim[T,N]) -> Array[int]:
+    if self._atom != other._atom:
+      raise ColaError()
+    within,origin = self.fully_contained(other)
+    if not within:
+      raise ColaError('Invalid other region specified')
+    org = [self._deATOMize(o) for o in origin]
+    return org
+
+  # relative to ATOM
   def origin_within(self, other: Multidim[T,N]) -> Array[int]:
     within,origin = self.fully_contained(other)
     if not within:
@@ -206,7 +273,7 @@ class Multidim[T,N:int]:
     for n in range(N):
       c = coord[n]
       for j in range(n+1,N):
-        c *= self._dims[j]
+        c *= self.dims()[j]
       linear += c
     return linear
 
@@ -215,74 +282,42 @@ class Multidim[T,N:int]:
     for n in range(1,N):
       mul = 1
       for j in range(n,N):
-        mul *= self._dims[j]
+        mul *= self.dims()[j]
       coord[n-1] = lidx // mul
       lidx %= mul
     coord[N-1] = lidx
     return coord
 
-  def set_density(self, *dens) -> Multidim[T,N]:
-    if staticlen(dens) != N:
-      raise ColaError('Must set density for each dimension')
-    dims = Array[int](N)
-    densities = Array[int](N)
-    # initialize 
-    for idx,d in enumerate(self._dims):
-      dims[idx] = d
-      densities[idx] = self._densities[idx]
-    idx = 0
-    for d in dens:
-      dims[idx] *= d
-      densities[idx] *= d
-      idx += 1
-    return Multidim(self, dims, densities)
-
-  # if can't have bool generic, use integer and just check for 0 or 1
+  # TODO: bool generics
   # B => linearize final coord if 1
   # C => perform out-of-bounds check if 1 (only valid for B == 1)
   def _remap_local_lidx_to_buffer_lidx[B:int,C:int=0](self, local_lidx: int):
-    buffer_origin = self._buffer_owner.cgrid_origin()
     # steps
     # 1. delinearize wrt this' dims to get the corresponding coordinate relative to this' logically contiguous region
     coord = self.delinearize(local_lidx)
-    # 2. multiply by this' strides in each dimension to figure out the pseudo-location in cgrid
-    # 3. add on this' cgrid_origin to get the true location in cgrid
-    # 4. subtract buffer origin from the coord
-    # 5. divide by the buffer strides    
-    for n in range(N):
-      coord[n] = (coord[n] * self._cgrid_mapping[n].stride + self._cgrid_mapping[n].start - buffer_origin[n]) // \
-                 self._buffer_owner._cgrid_mapping[n].stride      
-    if B == 1:
-      # 6. linearize coord wrt buffer
-      mapped_lidx = self._buffer_owner.linearize(coord)
-      if C == 1:
-        if mapped_lidx >= self._buffer_owner._nunits:
-          raise ColaError('out-of-bounds')
-        else:
-          return mapped_lidx
-      else:
-        return mapped_lidx
-    else:
-      return coord
+    return self._remap_local_coord_to_buffer_lidx[B,C](coord)
 
   # B => linearize final coord if true
   # C => perform out-of-bounds check if true (only valid for B == true)
   def _remap_local_coord_to_buffer_lidx[B:int,C:int=0](self, local_coord: Array[int]):
-    buffer_origin = self._buffer_owner.cgrid_origin()
+    buffer_origin = self._buffer_owner.cgrid_origin_abs()
     coord = Array[int](N)
+    # 1. atomize the local coord
     # 2. multiply by this' strides in each dimension to figure out the pseudo-location in cgrid
     # 3. add on this' cgrid_origin to get the true location in cgrid
     # 4. subtract buffer origin from the coord
     # 5. divide by the buffer strides    
+    # 6. get relative to self
     for n in range(N):
-      coord[n] = local_coord[n]
+      coord[n] = self._ATOMize(local_coord[n])
       coord[n] = (coord[n] * self._cgrid_mapping[n].stride + self._cgrid_mapping[n].start - buffer_origin[n]) // \
                  self._buffer_owner._cgrid_mapping[n].stride      
+      coord[n] = self._deATOMize(coord[n])
     if B == 1:
       # 6. linearize coord wrt buffer
       mapped_lidx = self._buffer_owner.linearize(coord)
       if C == 1:
-        if mapped_lidx >= self._buffer_owner._nunits:
+        if mapped_lidx >= self._buffer_owner.nunits():
           raise ColaError('out-of-bounds')
         else:
           return mapped_lidx
@@ -290,18 +325,20 @@ class Multidim[T,N:int]:
         return mapped_lidx
     else:
       return coord
-    
+
   def _canon(self, idx: int, _) -> ColaSlice:
-    return ColaSlice(idx, idx+1, 1)
+    return ColaSlice(self._ATOMize(idx), self._ATOMize(idx+1), 1)
   
   def _canon(self, idx: Slice, dim: int) -> ColaSlice:
-    return idx.cola_adjust(dim)
+    sl = idx.adjust(dim)
+    return ColaSlice(self._ATOMize(sl.start), self._ATOMize(sl.stop), sl.step)
+#    return idx.cola_adjust(dim)
 
   def _canon(self, idx: ColaSlice, _) -> ColaSlice:
     return idx
 
   def __call__(self) -> T:
-    if self._nunits != 1:
+    if self.nunits() != 1:
       raise ColaError('Must only have 1 unit')
     if not self.fully_contained(self._buffer_owner)[0]:
       raise ColaError('out-of-bounds in buffer access')
@@ -323,13 +360,12 @@ class Multidim[T,N:int]:
         raise ColaError('out-of-bounds in buffer access')
       return x()
 
-
   # like __call__, but clamps to the real buffer borders if necessary. Also ignores strided access into buffer,
   # this just adds on the idxs directly to self's origin within the buffer
   def aclamp(self, idx: int, *idxs) -> T:
     for idx in idxs:
       if not isinstance(idx, int):
-        raise ColaError('__call__ can only get integers')
+        raise ColaError('__aclamp__ can only get integers')
     if staticlen(idxs) == 0:
       # just lazy
       raise ColaError('Not implemented')
@@ -349,18 +385,52 @@ class Multidim[T,N:int]:
       for n in range(N):
         # get the access for this dim
         # self.start-buff.start gives the relative origin to buffer
-        s = self_map[n].start - buffer_map[n].start + arr[n]
+        s = self_map[n].start - buffer_map[n].start + self._ATOMize(arr[n]) * self_map[n].stride
         if s < 0:
           s = 0
         if s >= buffer_map[n].start + self._buffer_owner._dims[n]:
           s = self._buffer_owner._dims[n]-1
-        coord[n] = s
+        coord[n] = self._deATOMize(s)
       # now get the buffer idx
       lidx = self._buffer_owner._remap_local_coord_to_buffer_lidx[1,1](coord)
       return self._buffer[lidx]
 
+  # get a view on the location in self corresponding to region
+  # This ignores the stride of self and other, so that region basically corresponds directly to the buffer.
+  # If you want to add the stride back in, take another View of it with a strided access (this means that 
+  # if region has a stride, we compute the stop using its stride and dims, but the dims of the new region
+  # will be bigger since they also include the stuff that would've been skipped by the original region stride).
+  # Also ignores the atom of region and uses the buffer one
+  def __getitem__(self, region: Multidim[T,N]) -> Multidim[T,N]:
+    # TODO we could get rid of this requirement if we could just ensure that the cgrids were the same size or something
+    if self._cgrid != region._cgrid:
+      raise ColaError()
+    # determine and check origin
+    origin = [o2-o1-o3 for o1,o2,o3 in zip(self.cgrid_origin_abs(), region.cgrid_origin_abs(),self._buffer_owner.cgrid_origin_abs())]
+    for o in origin:
+      if o < 0:
+        raise ColaError('Location outside buffer')
+    # check that the dims fall within the buffer + create the whole cgrid mapping
+    mapping = Array[ColaSlice](N)
+    dims = Array[int](N)
+    for n in range(N):
+      stop = origin[n] + region._cgrid_mapping[n].stride * region._dims[n]
+      # tighten using the stride (so you don't get extra rows/cols/etc outside your region)
+      cs = ColaSlice(origin[n], stop, region._cgrid_mapping[n].stride)
+      # now reset the stride
+      cs2 = ColaSlice(cs.start, cs.stop, 1)
+      # we may have some extra elements on the edges of the region due to atomicity. So convert from ATOM _atom to 
+      # clean up on the edges and then back to ATOM (basically, this takes care of rounding)
+      cs3 = ColaSlice(self._deATOMize(cs2.start), self._deATOMize(cs2.stop), 1)
+      cs4 = ColaSlice(self._ATOMize(cs3.start), self._ATOMize(cs3.stop), 1)
+      if cs4.stop > self._buffer_owner._cgrid_mapping[n].stop:
+        raise ColaError('Region outside buffer')
+      mapping[n] = cs4
+      dims[n] = cs4.effective_sz
+    return Multidim[T,N](mapping, self._cgrid, self._buffer_owner, self._buffer, dims, self._buffer_owner._atom)    
+  
   def __getitem__(self, idx: int) -> Multidim[T,N]:
-    return self.__getitem__((idx,))
+    return self.__getitem__((idx,))  
   
   # if len(idxs) == 1, it is considered a linear index into the local region, even if N > 1.
   # This allows you to index with either 1 or N dimensions.
@@ -376,27 +446,25 @@ class Multidim[T,N:int]:
         idxs2 = self.delinearize(idxs[0])
         # canonicalize idxs to ColaSlice
         for n in range(N):
-          canon[n] = self._canon(idxs2[n], self._dims[n])
+          cs = self._canon(idxs2[n], self.dims()[n])
+          canon[n] = cs
       else:
         raise ColaError('Incorrect number of idxs')
     else:
       # canonicalize idxs to ColaSlice
       i = 0
       for idx in idxs:
-        canon[i] = self._canon(idx, self._dims[i])
+        cs = self._canon(idx, self.dims()[i])
+        canon[i] = cs
         i += 1
     # now combine to map to cgrid (remember, canon is still relative to self)
     combined = Array[ColaSlice](N)
     for n in range(N):
       this = self._cgrid_mapping[n]
       that = canon[n]
+#      combo_start = this.start + self._ATOMize(that.start) * this.stride
+#      combo_stop = this.start + self._ATOMize(that.stop) * this.stride
       combo_start = this.start + that.start * this.stride
-      # we do not use a min here because we allow the access to go beyond this since you might want to do that.
-      # Also, in cases where you are inbounds, you may *think* this brings you out of bounds, but it doesn't. For example
-      # say we have buffer @ [(1,4,2),(1,5,1)] in the cgrid. And view @ [(0,2,1),(0,4,3)] in the buffer. We would
-      # logically expect the view relative to the cgrid to be [(1,4,2),(1,5,3)] with dimensions (2,2).
-      # But this gives us[(1,5,2),(1,5,3)], so the stop in dim0 is "wrong". But actually it is fine because we still
-      # only get dimensions (2,2).
       combo_stop = this.start + that.stop * this.stride
       combo_stride = this.stride * that.stride
       combined[n] = ColaSlice(combo_start, combo_stop, combo_stride)
@@ -404,33 +472,33 @@ class Multidim[T,N:int]:
 
   def __setitem__(self, idxs, item: T):
     sliced = self[idxs]
-    if sliced._nunits != 1:
-      raise ColaError('Region size mismatch')
+    if sliced.nunits() != 1:
+      raise ColaError('Region size mismatch ' + str(sliced.nunits()) + ' ' + str(idxs))
     sliced._buffer[sliced._remap_local_lidx_to_buffer_lidx[1,1](0)] = item
 
   def __setitem__[N2:int](self, idxs, item: Multidim[T,N2]):
     sliced = self[idxs]
-    if sliced._nunits != item._nunits:
+    if sliced.nunits() != item.nunits():
       raise ColaError('Region size mismatch')
-    for i in range(sliced._nunits):
+    for i in range(sliced.nunits()):
       item_elem = item(i)
       sliced._buffer[sliced._remap_local_lidx_to_buffer_lidx[1,1](i)] = item_elem
 
   def __iter__(self) -> Generator[Multidim[T,N]]:
-    for i in range(self._nunits):
+    for i in range(self.nunits()):
       yield self.__getitem__((i,))
 
   def _get_max_str_len[I:int](self, lidx: int = 0) -> int:
     m = 0
     if I == N-1:
-      for _ in range(self._dims[I]):
+      for _ in range(self.dims()[I]):
         s = str(self(lidx))
         if len(s) > m:
           m = len(s)
         lidx += 1  
     elif I == N-2:
-      for _ in range(self._dims[I]):
-        for _ in range(self._dims[I+1]):          
+      for _ in range(self.dims()[I]):
+        for _ in range(self.dims()[I+1]):          
           s = str(self(lidx))
           if len(s) > m:
             m = len(s)
@@ -444,14 +512,14 @@ class Multidim[T,N:int]:
   def _to_str[I:int](self, max_len: int, lidx: int = 0) -> str:
     s = ''
     if I == N-1:
-      for _ in range(self._dims[I]):
+      for _ in range(self.dims()[I]):
         m = str(self(lidx))
         s += ' ' * (max_len - len(m) + 1) + m + ' '
         lidx += 1  
       s += '\n'
     elif I == N-2:
-      for _ in range(self._dims[I]):
-        for _ in range(self._dims[I+1]):          
+      for _ in range(self.dims()[I]):
+        for _ in range(self.dims()[I+1]):          
           m = str(self(lidx))
           s += ' ' * (max_len - len(m) + 1) + m + ' '
           lidx += 1
@@ -467,12 +535,12 @@ class Multidim[T,N:int]:
     return s
 
   def __eq__(self, val: T) -> bool:
-    if self._nunits != 1 or self() != val:
+    if self.nunits() != 1 or self() != val:
       return False
     return True
 
   def __eq__(self, val: list[T]) -> bool:
-    if self._nunits != len(val):
+    if self.nunits() != len(val):
       return False
     for i0,i1 in zip(self, val):
       if i0() != i1:
@@ -480,7 +548,7 @@ class Multidim[T,N:int]:
     return True
 
   def __eq__(self, val: Multidim[T,N]) -> bool:
-    if self._units != val._nunits:
+    if self.nunits() != val.nunits():
       return False
     for i0,i1 in zip(self, val):
       if i0() != i1():
@@ -488,45 +556,45 @@ class Multidim[T,N:int]:
     return True
 
   # lets you throw out the other cgrid and use a different one with a custom location 
-  def remap(self, cgrid: CoordGrid[N], location: Array[T], buffer_owner: Multidim[T,N]) -> Multidim[T,N]:
-    if cgrid != buffer_owner._cgrid:
-      raise ColaError()
-    for n in range(N):
-      if location[n] < 0:
-        raise ColaError()
-      if location[n] + self._dims[n] >= cgrid.dims[n]:
-        raise ColaError()
-    remapped = Multidim(self, False)
-    remapped._cgrid = cgrid
-    remapped._buffer_owner = buffer_owner
-    # adjust mapping
-    adj_map = Array[ColaSlice](N)
-    for n in range(N):
-      m = self._cgrid_mapping[n]
-      adj_map[m] = ColaSlice(m.start + location[n], m.stop + location[n], m.stride)
-    remapped._cgrid_mapping = adj_map
-    return remapped
+#  def remap(self, cgrid: CoordGrid[N], location: Array[T], buffer_owner: Multidim[T,N]) -> Multidim[T,N]:
+#    if cgrid != buffer_owner._cgrid:
+#      raise ColaError()
+#    for n in range(N):
+#      if location[n] < 0:
+#        raise ColaError()
+#      if location[n] + self._dims[n] >= cgrid.dims[n]:
+#        raise ColaError()
+#    remapped = Multidim(self, False)
+#    remapped._cgrid = cgrid
+#    remapped._buffer_owner = buffer_owner
+#    # adjust mapping
+#    adj_map = Array[ColaSlice](N)
+#    for n in range(N):
+#      m = self._cgrid_mapping[n]
+#      adj_map[m] = ColaSlice(m.start + location[n], m.stop + location[n], m.stride)
+#    remapped._cgrid_mapping = adj_map
+#    return remapped
+#
+#  def remap(self, cgrid: CoordGrid[N], location: Array[T]) -> Multidim[T,N]:
+#    for n in range(N):
+#      if location[n] < 0:
+#        raise ColaError()      
+#      if location[n] + self._dims[n] > cgrid.dims[n]:
+#        raise ColaError(str(location[n]) + ' ' + str(self._dims[n]) + ' ' + str(cgrid.dims[n]))
+#    remapped = Multidim(self, False)
+#    remapped._cgrid = cgrid
+#    remapped._buffer_owner = remapped
+#    # adjust mapping
+#    adj_map = Array[ColaSlice](N)
+#    for n in range(N):
+#      m = self._cgrid_mapping[n]
+#      adj_map[n] = ColaSlice(m.start + location[n], m.stop + location[n], m.stride)
+#    remapped._cgrid_mapping = adj_map
+#    return remapped
 
-  def remap(self, cgrid: CoordGrid[N], location: Array[T]) -> Multidim[T,N]:
-    for n in range(N):
-      if location[n] < 0:
-        raise ColaError()      
-      if location[n] + self._dims[n] > cgrid.dims[n]:
-        raise ColaError(str(location[n]) + ' ' + str(self._dims[n]) + ' ' + str(cgrid.dims[n]))
-    remapped = Multidim(self, False)
-    remapped._cgrid = cgrid
-    remapped._buffer_owner = remapped
-    # adjust mapping
-    adj_map = Array[ColaSlice](N)
-    for n in range(N):
-      m = self._cgrid_mapping[n]
-      adj_map[n] = ColaSlice(m.start + location[n], m.stop + location[n], m.stride)
-    remapped._cgrid_mapping = adj_map
-    return remapped
-
-  def default_fill(self,mul):
-    for i in range(self._nunits):
-      self[i] = i*mul
+  def default_fill(self,add):
+    for i in range(self.nunits()):
+      self[i] = i+add
 
 @dataclass(init=False)
 class Block[T,N:int]:
@@ -541,24 +609,34 @@ class Block[T,N:int]:
 
   def __init__(self, *dims):
     self.base = Multidim[T,N](*dims)
+
+  def __init__(self, dims: list[int], atom: int):
+    if len(dims) != N:
+      raise ColaError()
+    arr = Array[int](N)
+    for n in range(N):
+      arr[n] = dims[n]
+    self.base = Multidim[T,N](arr,atom)
      
   def __init__(self, other: Block[T,N]):
-    self.base = Multidim(other.base, True)
+    self.base = Multidim(other.base, True, other.base._atom)
 
   def __init__(self, other: View[T,N]):
-    self.base = Multidim(other.base, True)
+    self.base = Multidim(other.base, True, other.base._atom)
 
   def __init__(self, other: Multidim[T,N]):
     self.base = other
+
+  # TODO find pattern of Block(...).set_atom() in compiler and replace with a single call to Multidim constructor with atom
+  # so that it doesn't create two buffers unnecessarily
+  def set_atom(self, atom: int) -> Block[T,N]:
+    return Block(Multidim[T,N](self.base, True, atom=atom))
 
   def dims(self) -> Array[int]:
     return self.base.dims()
 
   def nunits(self) -> int:
     return self.base.nunits()
-
-  def set_density(self, *dens) -> Block[T,N]:
-    return Block(self.base.set_density(*dens))
 
   def cgrid_origin(self) -> Array[int]:
     return self.base.cgrid_origin()
@@ -590,12 +668,14 @@ class Block[T,N:int]:
   def __getitem__(self, idxs) -> View[T,N]:
     return View(self.base[idxs])
 
+  def __getitem__(self, idx: Block[T,N]) -> View[T,N]:
+    return View(self.base[idx.base]) 
+
+  def __getitem__(self, idx: View[T,N]) -> View[T,N]:
+    return View(self.base[idx.base]) 
+
   def __str__(self) -> str:
     return str(self.base)
-
-#  def internal_iter(self) -> Generator[View[T,N]]:
-#    for v in self.base:
-#      yield View(v)
 
   def __eq__(self, val) -> bool:
     return self.base == val
@@ -618,31 +698,33 @@ class Block[T,N:int]:
   def buffer_owner(self) -> Block[T,N]:
     return Block(self.base._buffer_owner)
 
-  def default_fill(self,mul=1):
-    self.base.default_fill(mul)
+  def default_fill(self,add=0):
+    self.base.default_fill(add)
     return self
 
 @extend
 class View[T,N:int]:
 
   def __init__(self, other: Block[T,N]):
-    self.base = Multidim(other.base, False)
+    self.base = Multidim(other.base, False, other.base._atom)
 
   def __init__(self, other: View[T,N]):
-    self.base = Multidim(other.base, False)
+    self.base = Multidim(other.base, False, other.base._atom)
 
   # for internal building
   def __init__(self, other: Multidim[T,N]):
     self.base = other
+
+  # TODO find pattern of Block(...).set_atom() in compiler and replace with a single call to Multidim constructor with atom
+  # so that it doesn't create two buffers unnecessarily
+  def set_atom(self, atom: int) -> Block[T,N]:
+    return Block(Multidim[T,N](self.base, True, atom=atom))
 
   def dims(self) -> Array[int]:
     return self.base.dims()
 
   def nunits(self) -> int:
     return self.base.nunits()
-
-  def set_density(self, *dens) -> Block[T,N]:
-    return Block(self.base.set_densities(*dens))
 
   def cgrid_origin(self) -> Array[int]:
     return self.base.cgrid_origin()
@@ -670,6 +752,12 @@ class View[T,N:int]:
 
   def __setitem__[N2:int](self, idxs, item: View[T,N2]):
     self.base[idxs] = item.base
+
+  def __getitem__(self, idx: Block[T,N]) -> View[T,N]:
+    return View(self.base[idx.base]) 
+
+  def __getitem__(self, idx: View[T,N]) -> View[T,N]:
+    return View(self.base[idx.base]) 
 
   def __getitem__(self, idxs) -> View[T,N]:
     return View(self.base[idxs])
@@ -701,8 +789,8 @@ class View[T,N:int]:
   def remap(self, other: View[T,N]) -> View[T,N]:
     return Block(self.base.remap(other.base._cgrid, other.base._cgrid_origin(), other.base._buffer_owner))
 
-  def default_fill(self, mul=1):
-    self.base.default_fill(mul)
+  def default_fill(self, add=0):
+    self.base.default_fill(add)
     return self
 
 # users should utilize scan for iteration on blocks and views. Multidim just uses __iter__, but users
@@ -733,7 +821,7 @@ class Multidim[T,N:int]:
     if self.dims() != other.dims():
       raise ColaError('Invalid operands ' + str(self.dims()) + ' ' + str(other.dims()))
     res = Multidim[T,N](self.dims())
-    for n in range(self._nunits):
+    for n in range(self.nunits()):
       res[n] = self(n) - other(n)
     return res
 
@@ -754,9 +842,7 @@ class View[T,N:int]:
     return Block(self.base - other.base)
 
 def run_tests():
-  blk = Block[int,2](4,5)
-  for i in range(20):    
-    blk[i] = i+1
+  blk = Block[int,2](4,5).default_fill(1)
   @test
   def t0():
     assert blk.base._buffer == [r+1 for r in range(20)]
@@ -803,12 +889,46 @@ def run_tests():
     assert view3 == [50, 60, 70]
     assert view3[:,-1:] == [41, 50, 60, 70]
   t6()
-  ref4x4 = Block[int,2](4,4).default_fill(1)
-  est4x4 = Block[int,2](4,4).default_fill(2)
-
+  ref4x4 = Block[int,2](4,4).default_fill(0)
+  est4x4 = Block[int,2](4,4).default_fill(1)
   @test
   def t7():
     diff = ref4x4-est4x4
-    assert diff == [0,-1,-2,-3,-4,-5,-6,-7,-8,-9,-10,-11,-12,-13,-14,-15]
+    assert diff == [-1] * 16
   t7()
-
+  @test
+  def t8():
+    force_set_ATOM(2)
+    ablk = Block[int,2]([4,8],2).default_fill()
+    assert ablk == [n for n in range(32)]
+    assert ablk.base._cgrid_mapping == [ColaSlice(0,4,1), ColaSlice(0,8,1)]
+    ablk2 = Block(ablk[1:3:1,1::2])
+    ablk2[:,:] = ablk[1:3:1,1::2]
+    assert ablk2 == [9,11,13,15,17,19,21,23]
+    assert ablk2.base._cgrid_mapping == [ColaSlice(1,3,1), ColaSlice(1,8,2)]
+    ablk3 = ablk2.set_atom(1)
+    assert ablk3.base._cgrid_mapping == [ColaSlice(1,3,1), ColaSlice(1,8,2)]
+    ablk3[0] = 88
+    ablk3[0,1] = 99
+    assert ablk3.base._buffer[0] == 88
+    assert ablk3.base._buffer[1] == 99
+    ablk4 = ablk2[0:2:1,3:4:2]
+    assert ablk4 == [15,23]
+    assert ablk4(0,-1) == 11
+    assert ablk4.aclamp(0,-2) == 9
+    assert ablk4.aclamp(0,-37) == 9
+    assert ablk4.aclamp(1,-37) == 17
+    assert ablk4.aclamp(15,12) == 23
+  t8()
+  @test
+  def t9():
+    force_set_ATOM(2)
+    ablk = Block[int,2](8,8).default_fill()
+    bblk = Block(ablk[::2,::2]).default_fill(10)
+    bview = bblk[1:,1:]
+    assert bview == [15,16,17,19,20,21,23,24,25]
+    assert ablk[bview] == ablk[2:7,2:7]
+    q = ablk[bview]
+    z = ablk[2:7,2:7]
+  t9()
+run_tests()
