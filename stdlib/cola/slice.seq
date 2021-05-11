@@ -2,16 +2,26 @@ import math
 
 # A ColaSlice is adjusted on creation, so we do not need to unwrap the optionals
 # on every access
-@tuple(init=False)
+#@tuple(init=False)
 class ColaSlice:
   start: int
   stop: int
   stride: int
   effective_sz: int
 
-  def __new__(start: int, stop: int, stride: int):
+  def __init__(self, start: int, stop: int, stride: int):
     sz,tight = ColaSlice._compute_effective_sz(start, stop, 1, stride-1)
-    return start,tight,stride,sz
+    self.start = start
+    self.stop = tight
+    self.stride = stride
+    self.effective_sz = sz
+    #    return start,tight,stride,sz
+
+  def __eq__(self, other: ColaSlice):
+    return self.start == other.start and self.stop == other.stop and self.stride == other.stride
+
+  def __ne__(self, other: ColaSlice):
+    return not (self == other)
 
   def _compute_effective_sz(start, stop, take, skip) -> Tuple[int,int]:
     full_range = stop - start
@@ -28,8 +38,8 @@ class ColaSlice:
     nelems_skip = all_skips * skip
     return all_takes,start+nelems_take+nelems_skip
 
-#  def __str__(self):
-#    return str(self.start) + ':' + str(self.stop) + ':' + str(self.stride) + '(' + str(self.effective_sz) + ')'
+  def __str__(self):
+    return str(self.start) + ':' + str(self.stop) + ':' + str(self.stride) + '(' + str(self.effective_sz) + ')'
     
 @extend
 class Slice:
@@ -39,6 +49,12 @@ class Slice:
     stop = ~self.stop if self.stop else dlen
     stride = ~self.step if self.step else 1
     return ColaSlice(start,stop,stride)
+
+  def adjust(self, dlen) -> Slice:
+    start = ~self.start if self.start else 0
+    stop = ~self.stop if self.stop else dlen
+    stride = ~self.step if self.step else 1
+    return Slice(start,stop,stride)
 
 def run_tests():
   @test
