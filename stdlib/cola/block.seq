@@ -401,33 +401,59 @@ class Multidim[T,N:int]:
   # if region has a stride, we compute the stop using its stride and dims, but the dims of the new region
   # will be bigger since they also include the stuff that would've been skipped by the original region stride).
   # Also ignores the atom of region and uses the buffer one
-  def __getitem__(self, region: Multidim[T,N]) -> Multidim[T,N]:
+  def __getitem__(self, region: Multidim[T,N]) -> Multidim[T,N]:    
     # TODO we could get rid of this requirement if we could just ensure that the cgrids were the same size or something
     if self._cgrid != region._cgrid:
       raise ColaError()
+    # Here, we are indexing into self which has finer granularity than region
     # determine and check origin
     origin = [o2-o1-o3 for o1,o2,o3 in zip(self.cgrid_origin_abs(), region.cgrid_origin_abs(),self._buffer_owner.cgrid_origin_abs())]
     for o in origin:
       if o < 0:
         raise ColaError('Location outside buffer')
-    # check that the dims fall within the buffer + create the whole cgrid mapping
-    mapping = Array[ColaSlice](N)
-    dims = Array[int](N)
-    for n in range(N):
-      stop = origin[n] + region._cgrid_mapping[n].stride * region._dims[n]
-      # tighten using the stride (so you don't get extra rows/cols/etc outside your region)
-      cs = ColaSlice(origin[n], stop, region._cgrid_mapping[n].stride)
-      # now reset the stride
-      cs2 = ColaSlice(cs.start, cs.stop, 1)
-      # we may have some extra elements on the edges of the region due to atomicity. So convert from ATOM _atom to 
-      # clean up on the edges and then back to ATOM (basically, this takes care of rounding)
-      cs3 = ColaSlice(self._deATOMize(cs2.start), self._deATOMize(cs2.stop), 1)
-      cs4 = ColaSlice(self._ATOMize(cs3.start), self._ATOMize(cs3.stop), 1)
-      if cs4.stop > self._buffer_owner._cgrid_mapping[n].stop:
-        raise ColaError('Region outside buffer')
-      mapping[n] = cs4
-      dims[n] = cs4.effective_sz
-    return Multidim[T,N](mapping, self._cgrid, self._buffer_owner, self._buffer, dims, self._buffer_owner._atom)    
+    if self._atom >= region._atom:
+      # check that the dims fall within the buffer + create the whole cgrid mapping
+      mapping = Array[ColaSlice](N)
+      dims = Array[int](N)
+      for n in range(N):
+        stop = origin[n] + region._cgrid_mapping[n].stride * region._dims[n]
+        # tighten using the stride (so you don't get extra rows/cols/etc outside your region)
+        cs = ColaSlice(origin[n], stop, region._cgrid_mapping[n].stride)
+        # now reset the stride
+        cs2 = ColaSlice(cs.start, cs.stop, 1)
+        # we may have some extra elements on the edges of the region due to atomicity. So convert from ATOM _atom to 
+        # clean up on the edges and then back to ATOM (basically, this takes care of rounding)
+        cs3 = ColaSlice(self._deATOMize(cs2.start), self._deATOMize(cs2.stop), 1)
+        cs4 = ColaSlice(self._ATOMize(cs3.start), self._ATOMize(cs3.stop), 1)
+        if cs4.stop > self._buffer_owner._cgrid_mapping[n].stop:
+          raise ColaError('Region outside buffer')
+        mapping[n] = cs4
+        dims[n] = cs4.effective_sz
+      return Multidim[T,N](mapping, self._cgrid, self._buffer_owner, self._buffer, dims, self._buffer_owner._atom)    
+    else:
+      # only different with above is that we don't do the reatomize 
+      mapping = Array[ColaSlice](N)
+      dims = Array[int](N)
+      for n in range(N):
+        stop = origin[n] + region._cgrid_mapping[n].stride * region._dims[n]
+        # tighten using the stride (so you don't get extra rows/cols/etc outside your region)
+        cs = ColaSlice(origin[n], stop, region._cgrid_mapping[n].stride)
+        # now reset the stride
+        cs2 = ColaSlice(cs.start, cs.stop, 1)
+        # since we are increasing the granularity, a bunch of small regions all map to the same bigger region.
+        # so round down the start, and round up the stop to the nearest ATOM//self._atom multiple        
+        start = self._ATOMize(self._deATOMize(cs2.start))
+        mod = cs2.stop % (ATOM//self._atom)
+        # gotta be a better way to calculate this (need to round up to ATOM//self._atom if not already a multiple of it)
+        stop = cs2.stop + ((ATOM//self._atom) - mod if mod > 0 else 0)
+        cs4 = ColaSlice(start, stop, 1)
+        if cs4.stop > self._buffer_owner._cgrid_mapping[n].stop:
+          raise ColaError('Region outside buffer')
+        mapping[n] = cs4
+        dims[n] = cs4.effective_sz
+      return Multidim[T,N](mapping, self._cgrid, self._buffer_owner, self._buffer, dims, self._buffer_owner._atom)    
+#      raise ColaError('Test')
+      
   
   def __getitem__(self, idx: int) -> Multidim[T,N]:
     return self.__getitem__((idx,))  
@@ -532,6 +558,7 @@ class Multidim[T,N:int]:
   def __str__(self) -> str:
     s = '========\n'
     s += self._to_str[0](self._get_max_str_len[0]())
+    s += '\n' + str(self._cgrid_mapping)
     return s
 
   def __eq__(self, val: T) -> bool:
@@ -554,43 +581,6 @@ class Multidim[T,N:int]:
       if i0() != i1():
         return False
     return True
-
-  # lets you throw out the other cgrid and use a different one with a custom location 
-#  def remap(self, cgrid: CoordGrid[N], location: Array[T], buffer_owner: Multidim[T,N]) -> Multidim[T,N]:
-#    if cgrid != buffer_owner._cgrid:
-#      raise ColaError()
-#    for n in range(N):
-#      if location[n] < 0:
-#        raise ColaError()
-#      if location[n] + self._dims[n] >= cgrid.dims[n]:
-#        raise ColaError()
-#    remapped = Multidim(self, False)
-#    remapped._cgrid = cgrid
-#    remapped._buffer_owner = buffer_owner
-#    # adjust mapping
-#    adj_map = Array[ColaSlice](N)
-#    for n in range(N):
-#      m = self._cgrid_mapping[n]
-#      adj_map[m] = ColaSlice(m.start + location[n], m.stop + location[n], m.stride)
-#    remapped._cgrid_mapping = adj_map
-#    return remapped
-#
-#  def remap(self, cgrid: CoordGrid[N], location: Array[T]) -> Multidim[T,N]:
-#    for n in range(N):
-#      if location[n] < 0:
-#        raise ColaError()      
-#      if location[n] + self._dims[n] > cgrid.dims[n]:
-#        raise ColaError(str(location[n]) + ' ' + str(self._dims[n]) + ' ' + str(cgrid.dims[n]))
-#    remapped = Multidim(self, False)
-#    remapped._cgrid = cgrid
-#    remapped._buffer_owner = remapped
-#    # adjust mapping
-#    adj_map = Array[ColaSlice](N)
-#    for n in range(N):
-#      m = self._cgrid_mapping[n]
-#      adj_map[n] = ColaSlice(m.start + location[n], m.stop + location[n], m.stride)
-#    remapped._cgrid_mapping = adj_map
-#    return remapped
 
   def default_fill(self,add):
     for i in range(self.nunits()):
@@ -919,6 +909,7 @@ def run_tests():
     assert ablk4.aclamp(0,-37) == 9
     assert ablk4.aclamp(1,-37) == 17
     assert ablk4.aclamp(15,12) == 23
+    force_set_ATOM(1)
   t8()
   @test
   def t9():
@@ -928,7 +919,17 @@ def run_tests():
     bview = bblk[1:,1:]
     assert bview == [15,16,17,19,20,21,23,24,25]
     assert ablk[bview] == ablk[2:7,2:7]
-    q = ablk[bview]
-    z = ablk[2:7,2:7]
+    force_set_ATOM(1)
   t9()
+  @test
+  def t10():
+    force_set_ATOM(4)
+    vals = Block[int,2]([16,16],atom=4).default_fill()
+    flags = vals.set_atom(1).default_fill(100)
+    print(vals)
+    print(flags)    
+#    print(flags[vals[2,1]])
+    force_set_ATOM(1)
+  t10()
+    
 run_tests()
