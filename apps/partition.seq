@@ -1,0 +1,13 @@
+from cola.ptree import *
+
+# TODO use shorthand notation once available in Codon
+
+def square_grid[T,G:int](root: View[T,2]):
+  ptree = PTree(root)  
+  nodes: list[View[T,2]] = []
+  for r in range(0,root.dims()[0], G):
+    for c in range(0,root.dims()[1], G):
+      square = root[r:r+G,c:c+G]
+      nodes.append(square)
+  ptree.add_child(And[T,2](nodes))
+  return ptree

@@ -8,7 +8,9 @@ def bilinear_filter(a,b):
 
 # TODO don't need to clamp every access, so can get rid of some overhead (or just deal with it in the compiler).
 def interpolate_quarter_pel_6tap_bi(mb, six_tap_filter_func=six_tap_filter, bilinear_filter_func=bilinear_filter):
-  quarter = mb.set_density(4,4)
+  if ATOM < 4:
+    raise ColaError('For quarter-pel interpolation, must have global atomicity >= 4')
+  quarter = mb.set_atom(4)
   quarter[::4,::4] = mb
   # Half pel
   # horizontal

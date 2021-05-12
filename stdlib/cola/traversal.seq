@@ -224,8 +224,9 @@ class AppliedTraversal[T,N:int]:
     self.root = root
     self.origin = origin#[o for o in origin]
 
+  # not implemented as __iter__ cause I want the user to call scan
   # generates view values
-  def __iter__(self) -> Generator[View[T,N]]:
+  def do_iter(self) -> Generator[View[T,N]]:
     assert len(self.origin) > 0
     for coord in self.traversal.iter_with_origin(self.origin):
       yield self.root[coord]

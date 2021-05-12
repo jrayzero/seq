@@ -129,7 +129,7 @@ class Multidim[T,N:int]:
   def nunits(self) -> int:
     return self._nunits
 
-  def cgrid_origin(self) -> Array[int]:
+  def abs_origin(self) -> Array[int]:
     origin = Array[int](N)
     for idx in range(N):
       origin[idx] = self._cgrid_mapping[idx].start
@@ -212,10 +212,10 @@ class Multidim[T,N:int]:
   # B => linearize final coord if true
   # C => perform out-of-bounds check if true (only valid for B == true)
   def _remap_local_coord_to_buffer_lidx[B:int,C:int=0](self, local_coord: Array[int]):
-    buffer_origin = self._buffer_owner.cgrid_origin()
+    buffer_origin = self._buffer_owner.abs_origin()
     coord = Array[int](N)
     # 1. multiply by this' strides in each dimension to figure out the pseudo-location in cgrid
-    # 2. add on this' cgrid_origin to get the true location in cgrid
+    # 2. add on this' abs_origin to get the true location in cgrid
     # 3. subtract buffer origin from the coord
     # 4. divide by the buffer strides    
     # 5. get relative to self
@@ -275,7 +275,10 @@ class Multidim[T,N:int]:
       raise ColaError('out-of-bounds in buffer access')
     return x()
 
-  # This clamps to the underlying buffer, ignoring any stride info for self
+  ### CLAMPING
+  # These clamps clamp to the underlying buffer (or specified multidim), ignoring any stride and whatnot (so it clamps
+  # to the absolute edges of the buffer (or specified multidim))
+
   def clamp(self, idx: int, *idxs) -> T:
     for idx in idxs:
       if not isinstance(idx, int):
@@ -291,6 +294,11 @@ class Multidim[T,N:int]:
     if self.nunits() != 1:
       raise ColaError('Must only have 1 unit')        
     return self.clamp(0)
+
+  def clamp(self, other: Multidim[T,N]) -> Multidim[T,N]:
+    if self._cgrid != other._cgrid:
+      raise ColaError()
+    return Multidim(self, self._clamp_to(self, other))
 
   # clamp the edges of obj to the edges of clamp_to if necessary. Ignores any sort of stride on obj
   # and just clamps to clamp_to's absolute edges
@@ -350,7 +358,6 @@ class Multidim[T,N:int]:
       combo_stop = this.start + that.stop * this.stride
       combo_stride = this.stride * that.stride
       combined[n] = ColaSlice(combo_start, combo_stop, combo_stride)
-    print('combined ' + str(combined) + ' ' + str(canon) + ' ' + str(self._cgrid_mapping))
     return Multidim(self, combined)  
 
   # get a view on the location in self corresponding to region
@@ -363,7 +370,7 @@ class Multidim[T,N:int]:
     # TODO we could get rid of this requirement if we could just ensure that the cgrids were the same size or something
     if self._cgrid != region._cgrid:
       raise ColaError()  
-    origin = [o2-o1-o3 for o1,o2,o3 in zip(self.cgrid_origin(), region.cgrid_origin(),self._buffer_owner.cgrid_origin())]
+    origin = [o2-o1-o3 for o1,o2,o3 in zip(self.abs_origin(), region.abs_origin(),self._buffer_owner.abs_origin())]
     for o in origin:
       if o < 0:
         raise ColaError('Location outside buffer')
@@ -384,6 +391,40 @@ class Multidim[T,N:int]:
 
   def __getitem__(self, idx: int) -> Multidim[T,N]:
     return self.__getitem__((idx,))  
+
+  def __getitem__(self, idxs: list[int]) -> Multidim[T,N]:
+    canon = Array[ColaSlice](N)
+    if len(idxs) != N:
+      if len(idxs) == 1:
+        if N != 1:
+          # this is a linear idx
+          if idxs[0] < 0:
+            raise ColaError('linear idx must be >= 0')
+        # get relative to self
+        idxs2 = self.delinearize(idxs[0])
+        # canonicalize idxs to ColaSlice
+        for n in range(N):
+          cs = self._canon(idxs2[n], self.dims()[n])
+          canon[n] = cs
+      else:
+        raise ColaError('Incorrect number of idxs')
+    else:
+      # canonicalize idxs to ColaSlice
+      i = 0
+      for idx in idxs:
+        cs = self._canon(idx, self.dims()[i])
+        canon[i] = cs
+        i += 1
+    # now combine to map to cgrid (remember, canon is still relative to self)
+    combined = Array[ColaSlice](N)
+    for n in range(N):
+      this = self._cgrid_mapping[n]
+      that = canon[n]
+      combo_start = this.start + that.start * this.stride
+      combo_stop = this.start + that.stop * this.stride
+      combo_stride = this.stride * that.stride
+      combined[n] = ColaSlice(combo_start, combo_stop, combo_stride)
+    return Multidim(self, combined)  
   
   # if len(idxs) == 1, it is considered a linear index into the local region, even if N > 1.
   # This allows you to index with either 1 or N dimensions.
@@ -549,8 +590,8 @@ class Block[T,N:int]:
   def nunits(self) -> int:
     return self.base.nunits()
 
-  def cgrid_origin(self) -> Array[int]:
-    return self.base.cgrid_origin()
+  def abs_origin(self) -> Array[int]:
+    return self.base.abs_origin()
 
   def origin_within(self, other: Block[T,N]) -> Array[int]:
     return self.base.origin_within(other.base)
@@ -563,12 +604,6 @@ class Block[T,N:int]:
 
   def __call__(self, idx: int, *idxs) -> T:
     return self.base.__call__(idx, *idxs)
-
-  def clamp(self, idx: int, *idxs) -> T:
-    return self.base.clamp(idx, *idxs)
-
-  def clamp(self) -> T:
-    return self.base.clamp()
 
   def __setitem__(self, idx: Block[T,N], item: T):
     self.base[idx.base] = item
@@ -610,16 +645,16 @@ class Block[T,N:int]:
     return not (self == val)
 
   def loc_eq(self, other: View[T,N]) -> bool:
-    return self.loc_eq(other.base)
+    return self.base.loc_eq(other.base)
 
   def loc_eq(self, other: Block[T,N]) -> bool:
-    return self.loc_eq(other.base)
+    return self.base.loc_eq(other.base)
 
   def remap(self, cgrid: CoordGrid, location: Array[T]) -> Block[T,N]:
     return Block(self.base.remap(cgrid, location))
 
   def remap(self, other: Block[T,N]) -> Block[T,N]:
-    return Block(self.base.remap(other.base._cgrid, other.base.cgrid_origin()))
+    return Block(self.base.remap(other.base._cgrid, other.base.abs_origin()))
 
   def buffer_owner(self) -> Block[T,N]:
     return Block(self.base._buffer_owner)
@@ -647,8 +682,8 @@ class View[T,N:int]:
   def nunits(self) -> int:
     return self.base.nunits()
 
-  def cgrid_origin(self) -> Array[int]:
-    return self.base.cgrid_origin()
+  def abs_origin(self) -> Array[int]:
+    return self.base.abs_origin()
 
   def origin_within(self, other: Block[T,N]) -> Array[int]:
     return self.base.origin_within(other.base)
@@ -668,6 +703,12 @@ class View[T,N:int]:
   def clamp(self) -> T:
     return self.base.clamp()
 
+  def clamp(self, other: Block[T,N]) -> View[T,N]:
+    return View(self.base.clamp(other.base))
+
+  def clamp(self, other: View[T,N]) -> View[T,N]:
+    return View(self.base.clamp(other.base))
+  
   def exists(self) -> bool:
     return self.base.exists()
 
@@ -711,10 +752,10 @@ class View[T,N:int]:
     return not (self == val)
 
   def loc_eq(self, other: View[T,N]) -> bool:
-    return self.loc_eq(other.base)
+    return self.base.loc_eq(other.base)
 
   def loc_eq(self, other: Block[T,N]) -> bool:
-    return self.loc_eq(other.base)
+    return self.base.loc_eq(other.base)
 
   def buffer_owner(self) -> Block[T,N]:
     return Block(self.base._buffer_owner)
@@ -726,7 +767,7 @@ class View[T,N:int]:
     return View(self.base.remap(cgrid, location, buffer_owner.base))
 
   def remap(self, other: View[T,N]) -> View[T,N]:
-    return Block(self.base.remap(other.base._cgrid, other.base._cgrid_origin(), other.base._buffer_owner))
+    return Block(self.base.remap(other.base._cgrid, other.base._abs_origin(), other.base._buffer_owner))
 
   def default_fill(self, add=0):
     self.base.default_fill(add)
@@ -781,7 +822,7 @@ def run_tests():
   def t2():
     assert blk2.base._buffer == [r*10 for r in range(blk2.nunits())]
     assert blk2.dims() == [2,4]
-    assert blk2.cgrid_origin() == [1,1]
+    assert blk2.abs_origin() == [1,1]
     assert blk2.origin_within(blk) == [1,1]
   t2()
   view = blk2[:,::3]
@@ -789,7 +830,7 @@ def run_tests():
   def t3():
     assert view == [0, 30, 40, 70]
     assert view.dims() == [2,2]
-    assert view.cgrid_origin() == [1,1]
+    assert view.abs_origin() == [1,1]
     assert view.origin_within(blk) == [1,1]
     assert view.origin_within(blk2) == [0,0]
   t3()
@@ -866,6 +907,9 @@ def run_tests():
     view = ablk[:,1:7:2]
     assert view.clamp(-1,-1) == 0
     assert view.clamp(10,20) == 31
+    view2 = view[-1:10,-13:3]
+    assert view2.clamp(view) == view
+    assert view2.clamp(ablk) == ablk[:,:6:2]
   t11()
     
 run_tests()

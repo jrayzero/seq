@@ -1,0 +1,127 @@
+from cola.block import *
+from utils import validate_arg
+from partition import square_grid
+
+# TODO availability would greatly benefit from FlagTrees to trim 
+
+class H264Intra:
+
+  # Various functions for checking availability
+
+  def left_available[T,N:int](slice_id: int, \
+                              region: View[T,N], \
+                              slice_info: View[int,N], \
+                              pred_info: View[int,N], \
+                              allow_inter_pred: bool) -> bool:
+    if region[0,-1].exists():
+      left_slice_id = slice_info[region[0,-1]]()
+      left_available = left_slice_id == slice_id
+      if not allow_inter_pred:
+        left_available = left_available and pred_info[region[0,-1]] == 1
+      return left_available
+    else:
+      return False
+
+  def up_left_available[T,N:int](slice_id: int, 
+                                 region: View[T,N], \
+                                 slice_info: View[int,N], \
+                                 pred_info: View[int,N], \
+                                 allow_inter_pred: bool) -> bool:
+    if region[-1,-1].exists():
+      up_left_slice_id = slice_info[region[-1,-1]]()
+      up_left_available = up_left_slice_id == slice_id
+      if not allow_inter_pred:
+        up_left_available = up_left_available and pred_info[region[-1,-1]] == 1
+      return up_left_available
+    else:
+      return False
+  
+  def up_available[T,N:int](slice_id: int, \
+                            region: View[T,N], \
+                            slice_info: View[int,N], \
+                            pred_info: View[int,N], \
+                            allow_inter_pred: bool) -> bool:
+    if region[-1,0].exists():      
+      up_slice_id = slice_info[region[-1,0]]
+      up_available = up_slice_id == slice_id
+      if not allow_inter_pred:
+        up_available = up_available and pred_info[region[-1,0]] == 1
+      return up_available
+    else:
+      return False
+
+  def up_right_available[T,N:int,R:int](slice_id: int, \
+                                        region: View[T,N], \
+                                        slice_info: View[int,N], \
+                                        pred_info: View[int,N], \
+                                        allow_inter_pred: bool) -> bool:
+    if region[-1,R].exists():      
+      up_right_slice_id = slice_info[region[-1,R]]
+      up_right_available = up_right_slice_id == slice_id
+      if not allow_inter_pred:
+        up_right_available = up_right_available and pred_info[region[-1,R]] == 1
+      return up_right_available 
+    else:
+      return False
+
+  # check left and right availability for a 16x16 prediction region
+  # region: the region to predict
+  # slice_info: slice ids 
+  # pred_info: type of prediction used for macroblocks (True = intra, False = inter)
+  # allow_inter_pred: whether mbs predicted with inter-prediction can be used for reference
+  def check_16x16_availability[T,N:int](region: View[T,N], \
+                                        slice_info: View[int,N], \
+                                        pred_info: View[int,N], \
+                                        allow_inter_pred: bool) -> Tuple[bool,bool]:
+    slice_id = slice_info[region](0)
+    return H264Intra.left_available(slice_id, region, slice_info, pred_info, allow_inter_pred), \
+      H264Intra.up_available(slice_id, region, slice_info, pred_info, allow_inter_pred)
+
+  # check left, up-left, up, and up-right 
+  def check_8x8_availability[T,N:int](region: View[T,N], \
+                                      slice_info: View[int,N], \
+                                      pred_info: View[int,N], \
+                                      allow_inter_pred: bool) -> Tuple[bool,bool,bool,bool]:
+    slice_id = slice_info[region](0)
+    return H264Intra.left_available(slice_id, region, slice_info, pred_info, allow_inter_pred), \
+      H264Intra.up_left_available(slice_id, region, slice_info, pred_info, allow_inter_pred), \
+      H264Intra.up_available(slice_id, region, slice_info, pred_info, allow_inter_pred), \
+      H264Intra.up_right_available[T,N,8](slice_id, region, slice_info, pred_info, allow_inter_pred)
+
+  # check left, up-left, up, and up-right
+  def check_4x4_availability[T,N:int](region: View[T,N], \
+                                      slice_info: View[int,N], \
+                                      pred_info: View[int,N], \
+                                      allow_inter_pred: bool) -> Tuple[bool,bool,bool,bool]:
+    slice_id = slice_info[region](0)
+    return H264Intra.left_available(slice_id, region, slice_info, pred_info, allow_inter_pred), \
+      H264Intra.up_left_available(slice_id, region, slice_info, pred_info, allow_inter_pred), \
+      H264Intra.up_available(slice_id, region, slice_info, pred_info, allow_inter_pred), \
+      H264Intra.up_right_available[T,N,4](slice_id, region, slice_info, pred_info, allow_inter_pred)
+  
+  # Various functions for doing the prediction
+  
+def debug():
+  blk = Block[int,2](64,64).default_fill()
+  slice_info = Block(blk)
+  for s in scan(slice_info):
+    s[0] = 1
+  pred_info = Block(blk)
+  for p in scan(pred_info):
+    p[0] = 1
+  availability = Block(blk)
+  # TODO require a scan for a ptree
+  for leaf in square_grid[int,16](View(blk))[0]:
+    l,u = H264Intra.check_16x16_availability(leaf, View(slice_info), View(pred_info), True)
+    s = str(l) + ',' + str(u)
+    v = 0
+    if l and u:
+      v = 1
+    elif l:
+      v = 2
+    elif u:
+      v = 3
+    availability[leaf] = v
+  print(availability)
+
+debug()
