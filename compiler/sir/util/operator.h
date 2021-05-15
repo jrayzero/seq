@@ -24,7 +24,7 @@ namespace util {
 class Operator : public Visitor {
 private:
   /// IDs of previously visited nodes
-  std::unordered_set<int> seen;
+  std::unordered_set<id_t> seen;
   /// stack of IR nodes being visited
   std::vector<Node *> nodeStack;
   /// stack of iterators
@@ -76,6 +76,7 @@ public:
   LAMBDA_VISIT(IfFlow);
   LAMBDA_VISIT(WhileFlow);
   LAMBDA_VISIT(ForFlow);
+  LAMBDA_VISIT(ImperativeForFlow);
   LAMBDA_VISIT(TryCatchFlow);
   LAMBDA_VISIT(PipelineFlow);
   LAMBDA_VISIT(dsl::CustomFlow);
@@ -145,6 +146,13 @@ public:
     see(v);
 
     return findLast<SeriesFlow>()->insert(newPos, v);
+  }
+
+  /// Resets the operator.
+  void reset() {
+    seen.clear();
+    nodeStack.clear();
+    itStack.clear();
   }
 
 private:

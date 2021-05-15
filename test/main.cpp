@@ -14,12 +14,10 @@
 
 #include "parser/common.h"
 #include "parser/parser.h"
+#include "seq/seq.h"
 #include "sir/llvm/llvisitor.h"
 #include "sir/transform/manager.h"
-#include "sir/transform/pipeline.h"
-#include "sir/transform/pythonic/dict.h"
-#include "sir/transform/pythonic/io.h"
-#include "sir/transform/pythonic/str.h"
+#include "sir/transform/pass.h"
 #include "util/common.h"
 #include "gtest/gtest.h"
 
@@ -80,19 +78,6 @@ static pair<vector<string>, bool> findExpects(const string &filename, bool isCod
   return {result, isError};
 }
 
-void registerStandardPasses(ir::transform::PassManager &pm) {
-  pm.registerPass("bio-pipeline-opts",
-                  std::make_unique<ir::transform::pipeline::PipelineOptimizations>());
-  pm.registerPass(
-      "pythonic-dict-arithmetic-opt",
-      std::make_unique<seq::ir::transform::pythonic::DictArithmeticOptimization>());
-  pm.registerPass(
-      "pythonic-str-addition-opt",
-      std::make_unique<seq::ir::transform::pythonic::StrAdditionOptimization>());
-  pm.registerPass("pythonic-io-cat-opt",
-                  std::make_unique<seq::ir::transform::pythonic::IOCatOptimization>());
-}
-
 string argv0;
 
 class SeqTest
@@ -129,10 +114,11 @@ public:
         exit(EXIT_FAILURE);
 
       ir::transform::PassManager pm;
-      registerStandardPasses(pm);
+      Seq seqDSL;
+      seqDSL.addIRPasses(&pm, /*debug=*/false); // always add all passes
       pm.run(module);
 
-      seq::ir::LLVMVisitor visitor(/*debug=*/get<1>(GetParam()));
+      ir::LLVMVisitor visitor(/*debug=*/get<1>(GetParam()));
       visitor.visit(module);
       visitor.run({file});
 
@@ -220,7 +206,7 @@ auto getTypeTests(const vector<string> &files) {
         if (line)
           cases.emplace_back(make_tuple(f, true, to_string(line) + "_" + testName, code,
                                         codeLine, barebones));
-        auto t = seq::ast::split(l.substr(4), ',');
+        auto t = ast::split(l.substr(4), ',');
         barebones = (t.size() > 1 && t[1] == "barebones");
         testName = t[0];
         code = l + "\n";
@@ -332,6 +318,8 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Combine(
         testing::Values(
             "transform/dict_opt.seq",
+            "transform/folding.seq",
+            "transform/for_lowering.seq",
             "transform/io_opt.seq",
             "transform/str_opt.seq"
         ),

@@ -1,10 +1,9 @@
+#include "dsl/plugins.h"
 #include "parser/parser.h"
+#include "seq/seq.h"
 #include "sir/llvm/llvisitor.h"
 #include "sir/transform/manager.h"
-#include "sir/transform/pipeline.h"
-#include "sir/transform/pythonic/dict.h"
-#include "sir/transform/pythonic/io.h"
-#include "sir/transform/pythonic/str.h"
+#include "sir/transform/pass.h"
 #include "util/common.h"
 #include "llvm/Support/CommandLine.h"
 #include <algorithm>
@@ -18,26 +17,6 @@ namespace {
 void versMsg(llvm::raw_ostream &out) {
   out << "Seq " << SEQ_VERSION_MAJOR << "." << SEQ_VERSION_MINOR << "."
       << SEQ_VERSION_PATCH << "\n";
-}
-
-void registerStandardPasses(seq::ir::transform::PassManager &pm, bool debug) {
-  if (debug)
-    return;
-
-  pm.registerPass(
-      "bio-pipeline-opts",
-      std::make_unique<seq::ir::transform::pipeline::PipelineOptimizations>());
-
-  pm.registerPass(
-      "pythonic-dict-arithmetic-opt",
-      std::make_unique<seq::ir::transform::pythonic::DictArithmeticOptimization>());
-
-  pm.registerPass(
-      "pythonic-str-addition-opt",
-      std::make_unique<seq::ir::transform::pythonic::StrAdditionOptimization>());
-
-  pm.registerPass("pythonic-io-cat-opt",
-                  std::make_unique<seq::ir::transform::pythonic::IOCatOptimization>());
 }
 
 const std::vector<std::string> &supportedExtensions() {
@@ -98,6 +77,7 @@ ProcessResult processSource(const std::vector<const char *> &args) {
       llvm::cl::desc("Add static variable definitions. The syntax is <name>=<value>"));
   llvm::cl::list<std::string> disabledOpts(
       "disable-opt", llvm::cl::desc("Disable the specified IR optimization"));
+  llvm::cl::list<std::string> dsls("dsl", llvm::cl::desc("Use specified DSL"));
 
   llvm::cl::ParseCommandLineOptions(args.size(), args.data());
 
@@ -136,9 +116,46 @@ ProcessResult processSource(const std::vector<const char *> &args) {
   auto t = std::chrono::high_resolution_clock::now();
 
   std::vector<std::string> disabledOptsVec(disabledOpts);
-  seq::ir::transform::PassManager pm(disabledOptsVec);
-  registerStandardPasses(pm, isDebug);
+  seq::ir::transform::PassManager pm(/*addStandardPasses=*/!isDebug, disabledOptsVec);
+  seq::PluginManager plm(&pm, isDebug);
+
+  // load Seq
+  seq::Seq seqDSL;
+  plm.load(&seqDSL);
+
+  LOG_TIME("[T] ir-setup = {:.1f}",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::high_resolution_clock::now() - t)
+                   .count() /
+               1000.0);
+
+  // load other plugins
+  for (const auto &dsl : dsls) {
+    auto result = plm.load(dsl);
+    switch (result) {
+    case seq::PluginManager::NONE:
+      break;
+    case seq::PluginManager::NOT_FOUND:
+      seq::compilationError("DSL '" + dsl + "' not found");
+      break;
+    case seq::PluginManager::NO_ENTRYPOINT:
+      seq::compilationError("DSL '" + dsl + "' has no entry point");
+      break;
+    case seq::PluginManager::UNSUPPORTED_VERSION:
+      seq::compilationError("DSL '" + dsl + "' version incompatible");
+      break;
+    default:
+      break;
+    }
+  }
+  t = std::chrono::high_resolution_clock::now();
   pm.run(module);
+  LOG_TIME("[T] ir-opt = {:.1f}", std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::high_resolution_clock::now() - t)
+                                          .count() /
+                                      1000.0);
+
+  t = std::chrono::high_resolution_clock::now();
   auto visitor = std::make_unique<seq::ir::LLVMVisitor>(isDebug);
   visitor->visit(module);
   LOG_TIME("[T] ir-visitor = {:.1f}",

@@ -117,6 +117,8 @@ include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
 set(SEQ_HPPFILES
+        compiler/dsl/dsl.h
+        compiler/dsl/plugins.h
         compiler/parser/ast.h
         compiler/parser/ast/expr.h
         compiler/parser/ast/stmt.h
@@ -135,7 +137,13 @@ set(SEQ_HPPFILES
         compiler/parser/visitors/typecheck/typecheck.h
         compiler/parser/visitors/typecheck/typecheck_ctx.h
         compiler/parser/visitors/visitor.h
+        compiler/seq/pipeline.h
+        compiler/seq/revcomp.h
+        compiler/seq/seq.h
         compiler/sir/analyze/analysis.h
+        compiler/sir/analyze/dataflow/cfg.h
+        compiler/sir/analyze/dataflow/dominator.h
+        compiler/sir/analyze/dataflow/reaching.h
         compiler/sir/attribute.h
         compiler/sir/base.h
         compiler/sir/const.h
@@ -146,13 +154,17 @@ set(SEQ_HPPFILES
         compiler/sir/instr.h
         compiler/sir/llvm/llvisitor.h
         compiler/sir/llvm/llvm.h
-        compiler/sir/llvm/revcomp.h
         compiler/sir/module.h
         compiler/sir/sir.h
+        compiler/sir/transform/cleanup/dead_code.h
         compiler/sir/transform/cleanup/replacer.h
+        compiler/sir/transform/folding/const_fold.h
+        compiler/sir/transform/folding/const_prop.h
+        compiler/sir/transform/folding/folding.h
+        compiler/sir/transform/folding/rule.h
+        compiler/sir/transform/lowering/imperative.h
         compiler/sir/transform/manager.h
         compiler/sir/transform/pass.h
-        compiler/sir/transform/pipeline.h
         compiler/sir/transform/pythonic/dict.h
         compiler/sir/transform/pythonic/io.h
         compiler/sir/transform/pythonic/str.h
@@ -181,6 +193,7 @@ set(SEQ_HPPFILES
         compiler/util/fmt/printf.h
         compiler/util/fmt/ranges.h)
 set(SEQ_CPPFILES
+        compiler/dsl/plugins.cpp
         compiler/parser/ast/expr.cpp
         compiler/parser/ast/stmt.cpp
         compiler/parser/ast/types.cpp
@@ -202,7 +215,14 @@ set(SEQ_CPPFILES
         compiler/parser/visitors/typecheck/typecheck_infer.cpp
         compiler/parser/visitors/typecheck/typecheck_stmt.cpp
         compiler/parser/visitors/visitor.cpp
+        compiler/seq/pipeline.cpp
+        compiler/seq/revcomp.cpp
+        compiler/seq/seq.cpp
         compiler/sir/attribute.cpp
+        compiler/sir/analyze/analysis.cpp
+        compiler/sir/analyze/dataflow/cfg.cpp
+        compiler/sir/analyze/dataflow/dominator.cpp
+        compiler/sir/analyze/dataflow/reaching.cpp
         compiler/sir/base.cpp
         compiler/sir/const.cpp
         compiler/sir/dsl/nodes.cpp
@@ -210,11 +230,15 @@ set(SEQ_CPPFILES
         compiler/sir/func.cpp
         compiler/sir/instr.cpp
         compiler/sir/llvm/llvisitor.cpp
-        compiler/sir/llvm/revcomp.cpp
         compiler/sir/module.cpp
+        compiler/sir/transform/cleanup/dead_code.cpp
         compiler/sir/transform/cleanup/replacer.cpp
+        compiler/sir/transform/folding/const_fold.cpp
+        compiler/sir/transform/folding/const_prop.cpp
+        compiler/sir/transform/folding/folding.cpp
+        compiler/sir/transform/lowering/imperative.cpp
         compiler/sir/transform/manager.cpp
-        compiler/sir/transform/pipeline.cpp
+        compiler/sir/transform/pass.cpp
         compiler/sir/transform/pythonic/dict.cpp
         compiler/sir/transform/pythonic/io.cpp
         compiler/sir/transform/pythonic/str.cpp
@@ -270,6 +294,8 @@ add_subdirectory(${CMAKE_CURRENT_BINARY_DIR}/googletest-src
 
 set(SEQ_TEST_CPPFILES
         test/main.cpp
+        test/sir/analyze/dominator.cpp
+        test/sir/analyze/reaching.cpp
         test/sir/base.cpp
         test/sir/constant.cpp
         test/sir/flow.cpp
