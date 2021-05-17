@@ -192,6 +192,26 @@ class Multidim[E,T,C]:
     """
     assert self._cgrid == other._cgrid
     return Multidim._do_fully_contained[C](self._cgrid_mapping, other._cgrid_mapping)
+
+  def _do_fully_contained[C](self_mapping: C, other: CoordGrid[T]) -> bool:
+    if staticlen(self_mapping) == 0:
+      return True
+    else:
+      starts_oob = self_mapping[0].start < 0
+      stops_oob = self_mapping[0].stop > other._dims[0]
+      return not (starts_oob or stops_oob) and Multidim._do_fully_contained(self_mapping[1:], other[1:])
+
+
+  def fully_contained(self, other: CoordGrid[T]) -> bool:
+    """
+    Check if self is fully contained within the specified cgrid.
+    wrt their CoordGrids (which should be the same). self is fully contained
+    if
+    1: self's start >= other's start 
+    2: self's stop <= other's stop
+    """
+    assert self._cgrid == other
+    return Multidim._do_fully_contained[C](self._cgrid_mapping, other)
   
   def _do_linearize(coord, dims) -> int:
     if staticlen(coord) == 0:
@@ -606,6 +626,14 @@ class Multidim[E,T,C]:
     for i in range(self.nunits()):
       self[i] = i+add
 
+  def remap(self, other: Multidim[E,T,C]):
+    """
+    Remap self to point to other's cgrid. Modifies self. Only works for block-like.
+    """
+    assert self._is_owner # doesn't make sense to remap a view
+    assert self.fully_contained(other)
+    self._cgrid = other._cgrid
+
 @dataclass(init=False)
 class Block[E,T,C]:
   base: Multidim[E,T,C]
@@ -657,6 +685,10 @@ class Block[E,T,C]:
 
   def origin(self) -> T:
     return self.base.origin()
+
+  def remap(self, other: Block[E,T,C]) -> Block[E,T,C]:
+    self.remap(other.base)
+    return self
 
   def origin_relative_to(self, other: Block[E,T,C]) -> T:
     return self.base.origin_relative_to(other.base)
