@@ -59,8 +59,7 @@ class Multidim[E,T,C]:
     """
     Create a root Multidim from a set of dimensions
     """
-    if staticlen(dims) != staticlen(self._dims):
-      raise ColaError('Incorrect number of dims')        
+    assert staticlen(dims) == staticlen(self._dims)
     self._dims = tuple(d for d in dims)
     self._cgrid_mapping = tuple(ColaSlice(0,d,1) for d in dims)
     self._nunits = mul_reduce(self._dims)
@@ -115,6 +114,15 @@ class Multidim[E,T,C]:
     self._is_owner = False
     self._is_root = False
 
+  def set_density(self, *mul) -> Multidim[E,T,C]:
+    """
+    Creates a new Multidim with mul[i] bigger size in dimension i.
+    TODO currently, the Multidim created has no relation to self.
+    """
+    assert staticlen(mul) == staticlen(self._dims)
+    dims = mul_tuples(self._dims, tuple(m for m in mul))
+    return Multidim[E,T,C](dims)
+
   def dims(self) -> T:
     """
     Return the dimensions of self
@@ -139,11 +147,13 @@ class Multidim[E,T,C]:
     Return the origin of self relative to other wrt their CoordGrids 
     (which should be the same)
     """
-    if self._cgrid != other._cgrid:
-      raise ColaError()
+    assert self._cgrid == other._cgrid
     return subtract_tuples(self.origin(), other.origin())
 
   def _compute_area_tuple[T](origin_tup: T, dim_tup: T):
+    """
+    Compute the area covered by dim_tup starting at origin_tup.
+    """
     if staticlen(origin_tup) == 0:
       return ()
     else:
@@ -157,8 +167,7 @@ class Multidim[E,T,C]:
     location within other. Any underlying stride of self and/or surrounding region is ignored
     when other is accessed, using only the origin and dimension information.
     """
-    if not equal_tuples(surrounding_region.dims(), other.dims()):
-      raise ColaError()
+    assert equal_tuples(surrounding_region.dims(), other.dims())
     origin = self.origin_relative_to(surrounding_region)
     # compute the full size of self to get out of other
     area = Multidim._compute_area_tuple(origin, self._dims)
@@ -181,8 +190,7 @@ class Multidim[E,T,C]:
     1: self's start >= other's start 
     2: self's stop <= other's stop
     """
-    if self._cgrid != other._cgrid:
-      raise ColaError('Different cgrids')
+    assert self._cgrid == other._cgrid
     return Multidim._do_fully_contained[C](self._cgrid_mapping, other._cgrid_mapping)
   
   def _do_linearize(coord, dims) -> int:
@@ -246,10 +254,8 @@ class Multidim[E,T,C]:
     if B == 1:
       # 6. linearize coord wrt buffer
       mapped_lidx = self._buffer_owner._linearize(coord)
-      if mapped_lidx >= self._buffer_owner.nunits():
-        raise ColaError('out-of-bounds')
-      else:
-        return mapped_lidx
+      assert mapped_lidx < self._buffer_owner.nunits() # check in-bounds
+      return mapped_lidx
     else:
       return coord
 
@@ -257,10 +263,8 @@ class Multidim[E,T,C]:
     """
     Realize the unit within this Multidim (nunits must be 1)
     """
-    if self.nunits() != 1:
-      raise ColaError('Must only have 1 unit')
-    if not self.fully_contained(self._buffer_owner):
-      raise ColaError('out-of-bounds in buffer access')
+    assert self.nunits() == 1
+    assert self.fully_contained(self._buffer_owner)
     return self._buffer[self._remap_local_lidx_to_buffer_lidx[1](0)]  
 
   def __call__(self, idx: int, *idxs) -> E:
@@ -270,16 +274,14 @@ class Multidim[E,T,C]:
     corresponds to a linear index within self. All indices are relative to self.
     """
     for idx in idxs:
-      if not isinstance(idx, int):
-        raise ColaError('__call__ can only get integers')
+      # TODO does this statically assert ?
+      assert isinstance(idx, int)
     if staticlen(idxs) == 0:
       x = self[(idx,)]
       return x()
     else:
       x = self[(idx,) + tuple(i for i in idxs)]
-      # verify that the mapping relative to buffer is all positive (otherwise you either crash, or get an unexpected value)
-      if not x.fully_contained(self._buffer_owner):
-        raise ColaError('out-of-bounds in buffer access')
+      assert x.fully_contained(self._buffer_owner) # check in-bounds
       return x()
 
   def clamp(self) -> E:
@@ -287,8 +289,7 @@ class Multidim[E,T,C]:
     Like __call__, but the accessed unit location is clamped to the edges of the underlying buffer if the
     location is out-of-bounds wrt the buffer.
     """
-    if self.nunits() != 1:
-      raise ColaError('Must only have 1 unit')        
+    assert self.nunits() == 1
     return self.clamp(0)
 
   def clamp(self, idx: int, *idxs) -> E:
@@ -297,8 +298,7 @@ class Multidim[E,T,C]:
     location is out-of-bounds wrt the buffer.
     """
     for idx in idxs:
-      if not isinstance(idx, int):
-        raise ColaError('clamp can only get integers')      
+      assert isinstance(idx, int)
     # first get the normal access
     acc = self[(idx,) + tuple(i for i in idxs)] if staticlen(idxs) > 0 else self[idx]
     # now clamp it and use __call__
@@ -309,8 +309,7 @@ class Multidim[E,T,C]:
     """
     Clamp the boundaries of self relative to other and return the clamped region.
     """
-    if self._cgrid != other._cgrid:
-      raise ColaError()
+    assert self._cgrid == other._cgrid
     return Multidim(self, self._clamp_to(other))
 
   def _do_clamp_to[C](acc_map: C, buff_map: C) -> C:
@@ -343,60 +342,14 @@ class Multidim[E,T,C]:
     buff_map = clamp_to._cgrid_mapping
     return Multidim._do_clamp_to[C](acc_map, buff_map)
 
-#  def __getitem__[Z](self, idxs: list[Z]) -> Multidim[E,T,C]:
-#    """
-#    Get the region corresponding to idxs within self.
-#    """
-#    canon = Array[ColaSlice](N)
-#    if len(idxs) != N:
-#      if len(idxs) == 1:
-#        if N != 1:
-#          # this is a linear idx
-#          if idxs[0] < 0:
-#            raise ColaError('linear idx must be >= 0')
-#        # get relative to self
-#        idxs2 = self._delinearize(idxs[0])
-#        # canonicalize idxs to ColaSlice
-#        for n in range(N):
-#          cs = self._canonicalize_idx(idxs2[n], self.dims()[n])
-#          canon[n] = cs
-#      else:
-#        raise ColaError('Incorrect number of idxs')
-#    else:
-#      # canonicalize idxs to ColaSlice
-#      i = 0
-#      for idx in idxs:
-#        cs = self._canonicalize_idx(idx, self.dims()[i])
-#        canon[i] = cs
-#        i += 1
-#    # now combine to map to cgrid (remember, canon is still relative to self)
-#    combined = Array[ColaSlice](N)
-#    for n in range(N):
-#      this = self._cgrid_mapping[n]
-#      that = canon[n]
-#      combo_start = this.start + that.start * this.stride
-#      combo_stop = this.start + that.stop * this.stride
-#      combo_stride = this.stride * that.stride
-#      combined[n] = ColaSlice(combo_start, combo_stop, combo_stride)
-#    return Multidim(self, combined)  
-
-# TODO left off here. I'm converting everything to tuples. In block and view, I can fake the T,C generics by doing
-# def recurse[N:int]():
-#   if N == 0:
-#     return ()
-#   else:
-#     return (0,) + recurse[N-1]()
-# T = typeof(recurse[N]())
-# and the same for C but with ColaSlice
-
   def _get_mapping(self_cgrid_mapping, other_cgrid_mapping, other_origin, relative_origin):
     if staticlen(other_origin) == 0:
       return ()
     else:
-      if other_origin[0] % (self_cgrid_mapping[0].start+self_cgrid_mapping[0].stride) != 0:
-        raise ColaError('other\'s origin does not fall on self\'s stride line.')
-      if other_cgrid_mapping[0].stride % self_cgrid_mapping[0].stride != 0:
-        raise ColaError('other\'s stride is not a multiple of self\'s stride')
+      # if fails: other\'s origin does not fall on self\'s stride line
+      assert other_origin[0] % (self_cgrid_mapping[0].start+self_cgrid_mapping[0].stride) == 0
+      # if fails: other\'s stride is not a multiple of self\'s stride
+      assert other_cgrid_mapping[0].stride % self_cgrid_mapping[0].stride == 0
       # get the stop of other RELATIVE to self
       stop = other_cgrid_mapping[0].stop - self_cgrid_mapping[0].start-1
       # creating the mapping RELATIVE to self 
@@ -413,8 +366,7 @@ class Multidim[E,T,C]:
     so you can get things out-of-bounds. Use clamp(self0 if you want to actually constrain this (i.e.
     self[other].clamp(self)
     """
-    if self._cgrid != other._cgrid:
-      raise ColaError()  
+    assert self._cgrid == other._cgrid
     other_origin = other.origin()
     # this becomes the start of the accessed region
     relative = other.origin_relative_to(self)
@@ -478,8 +430,7 @@ class Multidim[E,T,C]:
     if staticlen(idxs) == 1:
       if staticlen(self._dims) != 1:
         # this is a linear idx
-        if idxs[0] < 0:
-          raise ColaError('linear idx must be >= 0')        
+        assert idxs[0] >= 0
         idxs2 = self._delinearize(idxs[0])
         canon = Multidim._do_canonicalize(idxs2, self._dims)
         return Multidim(self, Multidim._do_combined(self._cgrid_mapping, canon))
@@ -515,8 +466,7 @@ class Multidim[E,T,C]:
     """
     # Directly accesses the buffer otherwise you'll infinitely recurse
     sliced = self[idxs]
-    if sliced.nunits() != item.nunits():
-      raise ColaError('Region size mismatch')
+    assert sliced.nunits() == item.nunits()
     for i in range(sliced.nunits()):
       item_elem = item(i)
       sliced._buffer[sliced._remap_local_lidx_to_buffer_lidx[1](i)] = item_elem
@@ -714,6 +664,9 @@ class Block[E,T,C]:
   def origin_relative_to(self, other: View[E,T,C]) -> T:
     return self.base.origin_relative_to(other.base)
 
+  def set_density(self, *dims) -> Block[E,T,C]:
+    return Block(self.base.set_density(*dims))
+
   def __call__(self) -> E:
     return self.base.__call__()
 
@@ -819,7 +772,10 @@ class View[E,T,C]:
     return View(self.base.clamp(other.base))
   
   def exists(self) -> bool:
-    return self.base.fully_contained()
+    return self.base.fully_contained(self.base._buffer_owner)
+  
+  def set_density(self, *dims) -> Block[E,T,C]:
+    return Block(self.base.set_density(*dims))
 
   def __setitem__(self, idx: Block[E,T,C], item: E):
     self.base[idx.base] = item
@@ -879,8 +835,7 @@ class View[E,T,C]:
 @extend 
 class Multidim[E,T,C]:
   def __sub__(self, other: Multidim[E,T,C]):
-    if self.dims() != other.dims():
-      raise ColaError('Invalid operands ' + str(self.dims()) + ' ' + str(other.dims()))
+    assert self.dims() == other.dims()
     res = Multidim[E,T,C](self.dims())
     for n in range(self.nunits()):
       res[n] = self(n) - other(n)
@@ -903,6 +858,7 @@ class View[E,T,C]:
     return Block(self.base - other.base)
 
 def run_tests():
+  print 'Running block.seq tests'
   blk = Block.make[int](4,5).default_fill(1)
   @test
   def t0():
@@ -968,17 +924,15 @@ def run_tests():
     assert view2.clamp(ablk) == ablk[:,:6:2]
   t8()
   @test
-  # TODO left off here. The 1D doesn't work well...
   def t9():
     blk = Block.make[int](20).default_fill()
-    print(blk)
     view = blk[1:11:3]
-    print(view)
+    assert view == [1,4,7,10]
     view2 = blk[4::6]
-    print(view2)
+    assert view2 == [4,10,16]
     view3 = view[view2]
-    print(view3)
+    assert view3 == [4,10,16]
     view4 = view3.clamp(view)
-    print(view4)
+    assert view4 == [4,10]
   t9()
 run_tests()

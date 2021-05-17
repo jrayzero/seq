@@ -1,11 +1,14 @@
 from cola.block import *
 from cola.traversal import *
+from cola.ptree import *
 
 def _scan(item, *items):
   if staticlen(items) == 0:
     if isinstance(item, View) or isinstance(item, Block):
       return (iter(item.base),)
     elif isinstance(item, AppliedTraversal):
+      return (item.do_iter(),)
+    elif isinstance(item, AndPTree):
       return (item.do_iter(),)
     else:
       return (iter(item),)
@@ -14,6 +17,8 @@ def _scan(item, *items):
       return (iter(item.base),) + _scan(*items)
     elif isinstance(item, AppliedTraversal):
       return (item.do_iter(),) + _scan(*items)
+    elif isinstance(item, AndPTree):
+      return (item.do_iter(),) + _scan(*items)
     else:
       return (iter(item),) + _scan(*items)
 
@@ -21,11 +26,12 @@ def _scan(item, *items):
 # shouldn't have to touch that part.
 # Using scan makes it easier to identify "interesting" loop use cases in the compiler
 def scan(item, *items):
+  # have this separate condition so I don't return a tuple for a single item (which happens with _scan)
   if staticlen(items) == 0:
     if isinstance(item, View) or isinstance(item, Block):
       for i in item.base:
         yield i
-    elif isinstance(item, AppliedTraversal):
+    elif isinstance(item, AppliedTraversal) or isinstance(item, AndPTree):
       for i in item.do_iter():
         yield i
     else:

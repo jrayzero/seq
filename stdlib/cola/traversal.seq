@@ -197,36 +197,36 @@ class AStep:
     other.add_movement(movement)
     return other
 
-class AppliedTraversal[T,N:int]:
+class AppliedTraversal[E,T,C]:
   
   traversal: Traversal
-  root: View[T,N]
+  root: View[E,T,C]
   origin: Tuple[int,int]
 
-  def __init__(self, traversal: Traversal, root: Block[T,N]):
+  def __init__(self, traversal: Traversal, root: Block[E,T,C]):
     self.traversal = traversal
     self.root = View(root)
     self.origin = traversal.origin #[0] * len(self.root.dims()) if len(traversal.origin) == 0 else [d for d in traversal.origin]
 
-  def __init__(self, traversal: Traversal, root: View[T,N]):
+  def __init__(self, traversal: Traversal, root: View[E,T,C]):
     self.traversal = traversal
     self.root = root
     self.origin = traversal.origin #[0] * len(self.root.dims()) if len(traversal.origin) == 0 else [d for d in traversal.origin]
 
-  def __init__(self, traversal: Traversal, root: Block[T,N], origin: list[int]):
+  def __init__(self, traversal: Traversal, root: Block[E,T,C], origin: list[int]):
     self.traversal = traversal
     self.root = View(root)
-    self.origin = origin #[o for o in origin]
+    self.origin = origin
 
-  def __init__(self, traversal: Traversal, root: View[T,N], origin: list[int]):
+  def __init__(self, traversal: Traversal, root: View[E,T,C], origin: list[int]):
     assert len(origin) == self.traversal.ndims
     self.traversal = traversal
     self.root = root
-    self.origin = origin#[o for o in origin]
+    self.origin = origin
 
   # not implemented as __iter__ cause I want the user to call scan
   # generates view values
-  def do_iter(self) -> Generator[View[T,N]]:
+  def do_iter(self) -> Generator[View[E,T,C]]:
     assert len(self.origin) > 0
     for coord in self.traversal.iter_with_origin(self.origin):
       yield self.root[coord]
@@ -234,7 +234,7 @@ class AppliedTraversal[T,N:int]:
   def __str__(self) -> str:
     return ' -> '.join(tuple(str(item()) for item in self))
 
-  def trav_equals(self, ref: list[T]) -> bool:
+  def trav_equals(self, ref: list[E]) -> bool:
     idx = 0
     for elem in self:
       if elem() != ref[idx]:
@@ -245,8 +245,8 @@ class AppliedTraversal[T,N:int]:
 @extend 
 class Traversal:
 
-  def __call__[T,N:int](self, root: Block[T,N]) -> AppliedTraversal[T,N]:
+  def __call__[E,T,C](self, root: Block[E,T,C]) -> AppliedTraversal[E,T,C]:
     return AppliedTraversal(self, root)
 
-  def __call__[T,N:int](self, root: View[T,N]) -> AppliedTraversal[T,N]:
+  def __call__[E,T,C](self, root: View[E,T,C]) -> AppliedTraversal[E,T,C]:
     return AppliedTraversal(self, root)

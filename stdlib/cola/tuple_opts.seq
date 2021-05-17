@@ -14,6 +14,12 @@ def subtract_tuples[T](tupA: T, tupB: T) -> T:
   else:
     return (tupA[0] - tupB[0],) + subtract_tuples(tupA[1:], tupB[1:])
 
+def mul_tuples[T](tupA: T, tupB: T) -> T:
+  if staticlen(tupA) == 0:
+    return ()
+  else:
+    return (tupA[0] * tupB[0],) + subtract_tuples(tupA[1:], tupB[1:])
+
 def equal_tuples[T](tupA: T, tupB: T) -> bool:
   if staticlen(tupA) == 0:
     return True
