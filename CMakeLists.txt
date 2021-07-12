@@ -110,11 +110,11 @@ set(SEQRT_FILES runtime/lib.h
 add_library(seqrt SHARED ${SEQRT_FILES})
 target_compile_options(seqrt PRIVATE -mavx)
 target_include_directories(seqrt PRIVATE ${SEQ_DEP}/include runtime)
-target_link_libraries(seqrt PUBLIC seqomp ${BZ2} ${LZMA} ${BACKTRACE} ${STATIC_LIBCPP})
+target_link_libraries(seqrt PUBLIC seqomp  ${BACKTRACE} ${STATIC_LIBCPP})
 if (APPLE)
-    target_link_libraries(seqrt PUBLIC -Wl,-force_load,${ZLIB} -Wl,-force_load,${BDWGC} -Wl,-force_load,${HTSLIB})
+    target_link_libraries(seqrt PUBLIC -Wl,-force_load,${ZLIB} -Wl,-force_load,${BDWGC})
 else ()
-    target_link_libraries(seqrt PUBLIC -Wl,--whole-archive ${ZLIB} ${BDWGC} ${HTSLIB} -Wl,--no-whole-archive)
+    target_link_libraries(seqrt PUBLIC -Wl,--whole-archive ${ZLIB} ${BDWGC} -Wl,--no-whole-archive)
 endif ()
 
 # Seq parsing library

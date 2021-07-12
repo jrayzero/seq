@@ -35,6 +35,7 @@ std::vector<Generic> Type::doGetGenerics() const {
   std::vector<Generic> ret;
   for (auto &g : astType->getClass()->generics) {
     auto bound = g.type->getLink();
+    if (!bound) continue; // JESS: hack for possible nullptr. not correct for general usage, but solves my issue
     if (auto cls = bound->type->getClass())
       ret.emplace_back(
           getModule()->getCache()->realizeType(cls, extractTypes(cls->generics)));
