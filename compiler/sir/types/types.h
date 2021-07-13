@@ -253,6 +253,9 @@ public:
   const_reference front() const override { return fields.front(); }
   const_reference back() const override { return fields.back(); }
 
+  // JESS
+  int numFields() const { return fields.size(); }
+
   void realize(std::vector<Type *> mTypes, std::vector<std::string> mNames) override;
 
 private:
