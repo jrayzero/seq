@@ -91,6 +91,7 @@ const std::string Module::GETITEM_MAGIC_NAME = "__getitem__";
 const std::string Module::SETITEM_MAGIC_NAME = "__setitem__";
 const std::string Module::ITER_MAGIC_NAME = "__iter__";
 const std::string Module::LEN_MAGIC_NAME = "__len__";
+const std::string Module::CALL_MAGIC_NAME = "__call__";
 
 const std::string Module::NEW_MAGIC_NAME = "__new__";
 const std::string Module::INIT_MAGIC_NAME = "__init__";

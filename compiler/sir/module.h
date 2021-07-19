@@ -68,6 +68,7 @@ public:
   static const std::string SETITEM_MAGIC_NAME;
   static const std::string ITER_MAGIC_NAME;
   static const std::string LEN_MAGIC_NAME;
+  static const std::string CALL_MAGIC_NAME;
 
   static const std::string NEW_MAGIC_NAME;
   static const std::string INIT_MAGIC_NAME;
