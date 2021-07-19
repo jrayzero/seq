@@ -175,13 +175,31 @@ public:
   }
 
 private:
+  // JESS note: the code as is doesn't catch some corner cases, usually due to
+  // replacing with a seriesflow, especially one that includes a clone of the original instr.
+  // So I added in a bunch more see checks
+  // Here's a simplified example that would fail:
+  // void handle(CallInstr *instr) {
+  //   ...
+  //   auto *clone = cv.clone(instr);
+  //   IfFlow iff = module->Nr<IfFlow>(cond, true_path, false_path)
+  //   false_path->push_back(clone);
+  //   instr->replaceAll(iff);
+  //   see(iff); // doesn't do anything
+  //   see(clone); // doesn't do anything
+  // }
+  // The first see (see(iff)) gets ignored (if processChildrenFirst==false) because when handle returns,
+  // the children of instr are visited, but instr is now iff. And there isn't a check on iff in the code.
+  // The second see (see(clone)) gets ignored because the statements in a seriesflow aren't checked for seeing.
+  // I can't get the check for the first one to work, but I've inserted a saw check in processSeriesFlowChildren
+  // for the second one.
   void processChildren(Value *v) {
     nodeStack.push_back(v);
     for (auto *c : v->getUsedValues()) {
       if (saw(c))
         continue;
-      see(c);
       process(c);
+      see(c);
     }
     nodeStack.pop_back();
   }
@@ -189,8 +207,11 @@ private:
   void processSeriesFlowChildren(seq::ir::SeriesFlow *v) {
     nodeStack.push_back(v);
     for (auto it = v->begin(); it != v->end(); ++it) {
+      if (saw(*it))
+        continue;
       itStack.push_back(it);
       process(*it);
+      see(*it);
       itStack.pop_back();
     }
     nodeStack.pop_back();
