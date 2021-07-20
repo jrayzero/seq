@@ -51,7 +51,7 @@ public:
   /// Registers this DSL's IR passes with the given pass manager.
   /// @param pm the pass manager to add the passes to
   /// @param debug true if compiling in debug mode
-  virtual void addIRPasses(ir::transform::PassManager *pm, bool debug) {}
+  virtual void addIRPasses(ir::transform::PassManager *pm, bool debug, std::map<std::string,bool> other_opts={}) {}
 
   /// Returns a vector of "expression keywords", defined as keywords of
   /// the form "keyword <expr1> ... <exprN>".

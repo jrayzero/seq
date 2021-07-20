@@ -4,7 +4,7 @@
 
 namespace seq {
 
-void Seq::addIRPasses(ir::transform::PassManager *pm, bool debug) {
+    void Seq::addIRPasses(ir::transform::PassManager *pm, bool debug, std::map<std::string,bool> flags) {
   pm->registerPass(std::make_unique<KmerRevcompInterceptor>());
   if (debug)
     return;

@@ -89,13 +89,17 @@ private:
   /// passes to avoid registering
   std::vector<std::string> disabled;
 
+  /// other options
+  std::map<std::string,bool> other_opts;
+
 public:
   static const int PASS_IT_MAX;
 
   explicit PassManager(bool addStandardPasses = true,
-                       std::vector<std::string> disabled = {})
+                       std::vector<std::string> disabled = {},
+                       std::map<std::string, bool> other_opts = {})
       : km(), passes(), analyses(), executionOrder(), results(),
-        disabled(std::move(disabled)) {
+        disabled(std::move(disabled)), other_opts(std::move(other_opts)) {
     if (addStandardPasses)
       registerStandardPasses();
   }

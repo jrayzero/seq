@@ -27,6 +27,8 @@ private:
   std::vector<Plugin> plugins;
   /// true if compiling in debug mode
   bool debug;
+  /// other plugin-specific flags
+  std::map<std::string,bool> other_flags;
 
 public:
   using LoadFunc = std::function<std::unique_ptr<DSL>()>;
@@ -36,8 +38,8 @@ public:
 
   /// Constructs a plugin manager from a given IR pass manager
   /// @param pm the IR pass manager to register IR passes with
-  explicit PluginManager(ir::transform::PassManager *pm, bool debug = false)
-      : pm(pm), plugins(), debug(debug) {}
+  explicit PluginManager(ir::transform::PassManager *pm, bool debug = false, std::map<std::string,bool> other_flags = {})
+    : pm(pm), plugins(), debug(debug), other_flags(move(other_flags)) {}
 
   ~PluginManager();
 

@@ -29,7 +29,7 @@ PluginManager::Error PluginManager::load(DSL *dsl) {
       !dsl->isVersionSupported(SEQ_VERSION_MAJOR, SEQ_VERSION_MINOR, SEQ_VERSION_PATCH))
     return Error::UNSUPPORTED_VERSION;
 
-  dsl->addIRPasses(pm, debug);
+  dsl->addIRPasses(pm, debug, other_flags);
   // TODO: register new keywords
 
   return Error::NONE;
